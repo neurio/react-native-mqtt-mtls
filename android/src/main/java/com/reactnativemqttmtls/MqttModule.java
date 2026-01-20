@@ -511,6 +511,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
             StringBuilder result = new StringBuilder();
             result.append("=== Key Purposes for: ").append(privateKeyAlias).append(" ===\n\n");
+            result.append("Android API Level: ").append(android.os.Build.VERSION.SDK_INT).append("\n\n");
 
             try {
                 KeyFactory factory = KeyFactory.getInstance(
@@ -525,17 +526,27 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
                 boolean hasSign = (purposes & android.security.keystore.KeyProperties.PURPOSE_SIGN) != 0;
                 boolean hasVerify = (purposes & android.security.keystore.KeyProperties.PURPOSE_VERIFY) != 0;
-                boolean hasAgreeKey = (purposes & android.security.keystore.KeyProperties.PURPOSE_AGREE_KEY) != 0;
 
                 result.append("Key Purposes:\n");
                 result.append("  SIGN: ").append(hasSign ? "✓ YES" : "✗ NO").append("\n");
                 result.append("  VERIFY: ").append(hasVerify ? "✓ YES" : "✗ NO").append("\n");
-                result.append("  AGREE_KEY: ").append(hasAgreeKey ? "✓ YES" : "✗ NO").append("\n\n");
 
-                if (!hasAgreeKey) {
-                    result.append("❌ PROBLEM: Missing PURPOSE_AGREE_KEY!\n");
+                // Only check PURPOSE_AGREE_KEY on Android 12+ (API 31+)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    boolean hasAgreeKey = (purposes & android.security.keystore.KeyProperties.PURPOSE_AGREE_KEY) != 0;
+                    result.append("  AGREE_KEY: ").append(hasAgreeKey ? "✓ YES" : "✗ NO").append("\n\n");
+
+                    if (!hasAgreeKey) {
+                        result.append("❌ PROBLEM: Missing PURPOSE_AGREE_KEY!\n");
+                        result.append("   (Required for TLS key agreement on Android 12+)\n");
+                    } else {
+                        result.append("✅ Key has all required purposes for TLS!\n");
+                    }
                 } else {
-                    result.append("✅ Key has all required purposes for TLS!\n");
+                    result.append("  AGREE_KEY: N/A (Android 12+ only)\n\n");
+                    result.append("ℹ️  PURPOSE_AGREE_KEY is only available on Android 12+\n");
+                    result.append("   On Android 10-11, TLS key agreement works without this flag.\n");
+                    result.append("   Key should work fine for mTLS connections.\n");
                 }
 
                 result.append("\nKey Size: ").append(keyInfo.getKeySize()).append(" bits\n");
