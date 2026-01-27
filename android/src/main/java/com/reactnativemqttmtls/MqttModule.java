@@ -281,6 +281,74 @@ public class MqttModule extends ReactContextBaseJavaModule {
         }
     }
 
+    // --- Custom KeyManager for Hardware-Backed Keys ---
+    private static class CustomKeyManager extends X509ExtendedKeyManager {
+        private final String alias;
+        private final X509Certificate[] certChain;
+        private final PrivateKey privateKey;
+        
+        public CustomKeyManager(String alias, X509Certificate[] certChain, PrivateKey privateKey) {
+            this.alias = alias;
+            this.certChain = certChain;
+            this.privateKey = privateKey;
+            
+            Log.d(TAG, "╔════════════════════════════════════════════════════════════════");
+            Log.d(TAG, "║ CustomKeyManager Initialized");
+            Log.d(TAG, "╚════════════════════════════════════════════════════════════════");
+            Log.d(TAG, "  Alias: " + alias);
+            Log.d(TAG, "  Cert chain length: " + certChain.length);
+            Log.d(TAG, "  Private key algorithm: " + privateKey.getAlgorithm());
+            Log.d(TAG, "  Private key class: " + privateKey.getClass().getName());
+            Log.d(TAG, "");
+        }
+        
+        @Override
+        public String chooseClientAlias(String[] keyType, Principal[] issuers, Socket socket) {
+            Log.d(TAG, "🔑 chooseClientAlias called");
+            Log.d(TAG, "  Key types: " + Arrays.toString(keyType));
+            Log.d(TAG, "  Returning alias: " + alias);
+            return alias;
+        }
+        
+        @Override
+        public String chooseServerAlias(String keyType, Principal[] issuers, Socket socket) {
+            return null;
+        }
+        
+        @Override
+        public X509Certificate[] getCertificateChain(String alias) {
+            Log.d(TAG, "📜 getCertificateChain called for: " + alias);
+            if (this.alias.equals(alias)) {
+                Log.d(TAG, "  Returning chain with " + certChain.length + " cert(s)");
+                for (int i = 0; i < certChain.length; i++) {
+                    Log.d(TAG, "    [" + i + "] " + certChain[i].getSubjectDN());
+                }
+                return certChain;
+            }
+            return null;
+        }
+        
+        @Override
+        public String[] getClientAliases(String keyType, Principal[] issuers) {
+            return new String[] { alias };
+        }
+        
+        @Override
+        public String[] getServerAliases(String keyType, Principal[] issuers) {
+            return null;
+        }
+        
+        @Override
+        public PrivateKey getPrivateKey(String alias) {
+            Log.d(TAG, "🔐 getPrivateKey called for: " + alias);
+            if (this.alias.equals(alias)) {
+                Log.d(TAG, "  Returning hardware-backed private key");
+                return privateKey;
+            }
+            return null;
+        }
+    }
+
     // --- Helper Methods ---
     private String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
@@ -481,27 +549,24 @@ public class MqttModule extends ReactContextBaseJavaModule {
         verifyCertMatchesKey(clientCert, privateKeyAlias, androidKeyStore);
 
         // Build certificate chain for KeyManager (exclude self-signed root CAs)
-        ArrayList<java.security.cert.Certificate> certChainList = new ArrayList<>();
+        ArrayList<X509Certificate> certChainList = new ArrayList<>();
         for (X509Certificate cert : clientCertArray) {
             boolean isSelfSigned = cert.getIssuerDN().equals(cert.getSubjectDN());
             if (!isSelfSigned) {
                 certChainList.add(cert);
             }
         }
-        java.security.cert.Certificate[] certChain = certChainList.toArray(new java.security.cert.Certificate[0]);
+        X509Certificate[] certChain = certChainList.toArray(new X509Certificate[0]);
 
-        // Create KeyStore with hardware-backed private key
-        KeyStore keyStore = KeyStore.getInstance("PKCS12");
-        keyStore.load(null, null);
-        
+        // Get hardware-backed private key (keep it in AndroidKeyStore - don't extract!)
         PrivateKey privateKey = (PrivateKey) androidKeyStore.getKey(privateKeyAlias, null);
-        keyStore.setKeyEntry("client-key", privateKey, "".toCharArray(), certChain);
-        Log.d(TAG, "✓ Hardware-backed private key added to KeyStore");
+        Log.d(TAG, "✓ Retrieved hardware-backed private key (not extracted)");
 
-        // Initialize KeyManagerFactory
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(keyStore, "".toCharArray());
-        Log.d(TAG, "✓ KeyManager configured with " + certChain.length + " cert(s) in chain");
+        // Use custom KeyManager that keeps key in AndroidKeyStore
+        KeyManager[] keyManagers = new KeyManager[] {
+            new CustomKeyManager(privateKeyAlias, certChain, privateKey)
+        };
+        Log.d(TAG, "✓ Custom KeyManager configured with " + certChain.length + " cert(s) in chain");
 
         // Add ALL CA certificates to trust store
         KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
@@ -521,7 +586,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
         Log.d(TAG, "✓ Custom TrustManager configured");
 
         SSLContext sc = SSLContext.getInstance("TLS");
-        sc.init(kmf.getKeyManagers(), trustManagers, new SecureRandom());
+        sc.init(keyManagers, trustManagers, new SecureRandom());
 
         Log.d(TAG, "✅ SSLContext created successfully");
         Log.d(TAG, "");
