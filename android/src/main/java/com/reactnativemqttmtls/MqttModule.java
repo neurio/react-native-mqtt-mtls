@@ -45,6 +45,242 @@ public class MqttModule extends ReactContextBaseJavaModule {
         return "MqttModule";
     }
 
+    // --- Custom TrustManager with EXTENSIVE LOGGING ---
+    private static class CustomTrustManager implements X509TrustManager {
+        private final X509Certificate[] acceptedIssuers;
+        
+        public CustomTrustManager(KeyStore trustStore) throws Exception {
+            List<X509Certificate> certs = new ArrayList<>();
+            Enumeration<String> aliases = trustStore.aliases();
+            
+            Log.d(TAG, "╔════════════════════════════════════════════════════════════════");
+            Log.d(TAG, "║ Initializing CustomTrustManager");
+            Log.d(TAG, "╚════════════════════════════════════════════════════════════════");
+            
+            while (aliases.hasMoreElements()) {
+                String alias = aliases.nextElement();
+                java.security.cert.Certificate cert = trustStore.getCertificate(alias);
+                if (cert instanceof X509Certificate) {
+                    X509Certificate x509 = (X509Certificate) cert;
+                    certs.add(x509);
+                    Log.d(TAG, "  Trusted CA: " + x509.getSubjectDN());
+                    Log.d(TAG, "    Issuer: " + x509.getIssuerDN());
+                    Log.d(TAG, "    Serial: " + x509.getSerialNumber().toString(16));
+                }
+            }
+            
+            this.acceptedIssuers = certs.toArray(new X509Certificate[0]);
+            Log.d(TAG, "✓ CustomTrustManager initialized with " + acceptedIssuers.length + " CA(s)");
+            Log.d(TAG, "");
+        }
+        
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            // Not needed for client
+        }
+        
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            Log.d(TAG, "╔════════════════════════════════════════════════════════════════");
+            Log.d(TAG, "║ 🔐 SERVER CERTIFICATE VALIDATION STARTING");
+            Log.d(TAG, "╠════════════════════════════════════════════════════════════════");
+            Log.d(TAG, "║ Auth Type: " + authType);
+            Log.d(TAG, "║ Chain Length: " + (chain != null ? chain.length : 0));
+            Log.d(TAG, "╚════════════════════════════════════════════════════════════════");
+            
+            if (chain == null || chain.length == 0) {
+                Log.e(TAG, "❌ FAILED: Server certificate chain is empty");
+                throw new CertificateException("Server certificate chain is empty");
+            }
+            
+            // Log the entire certificate chain received from server
+            Log.d(TAG, "");
+            Log.d(TAG, "📋 Server Certificate Chain:");
+            for (int i = 0; i < chain.length; i++) {
+                X509Certificate cert = chain[i];
+                Log.d(TAG, "  [" + i + "] Subject: " + cert.getSubjectDN());
+                Log.d(TAG, "      Issuer:  " + cert.getIssuerDN());
+                Log.d(TAG, "      Serial:  " + cert.getSerialNumber().toString(16));
+                Log.d(TAG, "      Valid:   " + cert.getNotBefore() + " to " + cert.getNotAfter());
+                
+                try {
+                    cert.checkValidity();
+                    Log.d(TAG, "      ✓ Certificate is currently valid");
+                } catch (Exception e) {
+                    Log.e(TAG, "      ❌ Certificate validity check failed: " + e.getMessage());
+                }
+            }
+            
+            Log.d(TAG, "");
+            Log.d(TAG, "🔍 Starting Validation Process...");
+            Log.d(TAG, "");
+            
+            try {
+                X509Certificate serverCert = chain[0];
+                boolean validated = false;
+                String validationPath = "";
+                
+                // STEP 1: Try direct validation (server cert signed by one of our CAs)
+                Log.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                Log.d(TAG, "STEP 1: Checking if server cert is directly signed by our CAs");
+                Log.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                
+                for (int caIndex = 0; caIndex < acceptedIssuers.length; caIndex++) {
+                    X509Certificate ca = acceptedIssuers[caIndex];
+                    Log.d(TAG, "  Trying CA[" + caIndex + "]: " + ca.getSubjectDN());
+                    
+                    try {
+                        serverCert.verify(ca.getPublicKey());
+                        Log.d(TAG, "  ✅ SUCCESS! Server cert verified by CA[" + caIndex + "]");
+                        Log.d(TAG, "     CA Subject: " + ca.getSubjectDN());
+                        validationPath = "Direct: Server cert → CA[" + caIndex + "]";
+                        validated = true;
+                        break;
+                    } catch (SignatureException e) {
+                        Log.d(TAG, "  ✗ Signature mismatch with CA[" + caIndex + "]");
+                    } catch (Exception e) {
+                        Log.d(TAG, "  ✗ Verification failed with CA[" + caIndex + "]: " + e.getClass().getSimpleName());
+                    }
+                }
+                
+                // STEP 2: Try validation via intermediate certificates in the chain
+                if (!validated && chain.length > 1) {
+                    Log.d(TAG, "");
+                    Log.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    Log.d(TAG, "STEP 2: Checking validation via intermediate certificates");
+                    Log.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    
+                    for (int i = 1; i < chain.length; i++) {
+                        X509Certificate intermediateCert = chain[i];
+                        Log.d(TAG, "  Checking intermediate[" + i + "]: " + intermediateCert.getSubjectDN());
+                        
+                        // First, verify the intermediate cert against our CAs
+                        for (int caIndex = 0; caIndex < acceptedIssuers.length; caIndex++) {
+                            X509Certificate ca = acceptedIssuers[caIndex];
+                            Log.d(TAG, "    Trying to verify intermediate[" + i + "] with CA[" + caIndex + "]");
+                            
+                            try {
+                                intermediateCert.verify(ca.getPublicKey());
+                                Log.d(TAG, "    ✓ Intermediate[" + i + "] verified by CA[" + caIndex + "]");
+                                Log.d(TAG, "       CA: " + ca.getSubjectDN());
+                                
+                                // Now verify server cert is signed by this intermediate
+                                Log.d(TAG, "    Now verifying server cert with intermediate[" + i + "]...");
+                                serverCert.verify(intermediateCert.getPublicKey());
+                                
+                                Log.d(TAG, "    ✅ SUCCESS! Complete chain validated");
+                                Log.d(TAG, "       Server cert → Intermediate[" + i + "] → CA[" + caIndex + "]");
+                                validationPath = "Chain: Server cert → Intermediate[" + i + "] → CA[" + caIndex + "]";
+                                validated = true;
+                                break;
+                            } catch (SignatureException e) {
+                                Log.d(TAG, "    ✗ Signature mismatch");
+                            } catch (Exception e) {
+                                Log.d(TAG, "    ✗ Verification failed: " + e.getClass().getSimpleName());
+                            }
+                        }
+                        
+                        if (validated) break;
+                    }
+                }
+                
+                // STEP 3: Check if any intermediate in the chain IS one of our trusted CAs
+                if (!validated && chain.length > 1) {
+                    Log.d(TAG, "");
+                    Log.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    Log.d(TAG, "STEP 3: Checking if intermediate IS a trusted CA");
+                    Log.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    
+                    for (int i = 1; i < chain.length; i++) {
+                        X509Certificate intermediateCert = chain[i];
+                        Log.d(TAG, "  Checking if intermediate[" + i + "] is in our trust store");
+                        Log.d(TAG, "    Subject: " + intermediateCert.getSubjectDN());
+                        
+                        for (int caIndex = 0; caIndex < acceptedIssuers.length; caIndex++) {
+                            X509Certificate ca = acceptedIssuers[caIndex];
+                            
+                            // Compare subjects
+                            boolean subjectsMatch = intermediateCert.getSubjectDN().equals(ca.getSubjectDN());
+                            
+                            if (subjectsMatch) {
+                                Log.d(TAG, "    ✓ Subject matches CA[" + caIndex + "]");
+                                
+                                // Compare public keys to be sure
+                                try {
+                                    byte[] intermediatePubKey = intermediateCert.getPublicKey().getEncoded();
+                                    byte[] caPubKey = ca.getPublicKey().getEncoded();
+                                    
+                                    if (Arrays.equals(intermediatePubKey, caPubKey)) {
+                                        Log.d(TAG, "    ✓ Public keys match - same certificate!");
+                                        
+                                        // Verify server cert with this intermediate
+                                        serverCert.verify(intermediateCert.getPublicKey());
+                                        
+                                        Log.d(TAG, "    ✅ SUCCESS! Server cert verified by trusted intermediate");
+                                        validationPath = "Trusted Intermediate: Server cert → Intermediate[" + i + "] (=CA[" + caIndex + "])";
+                                        validated = true;
+                                        break;
+                                    } else {
+                                        Log.d(TAG, "    ✗ Public keys don't match");
+                                    }
+                                } catch (Exception e) {
+                                    Log.d(TAG, "    ✗ Verification failed: " + e.getMessage());
+                                }
+                            }
+                        }
+                        
+                        if (validated) break;
+                    }
+                }
+                
+                // Final result
+                Log.d(TAG, "");
+                Log.d(TAG, "╔════════════════════════════════════════════════════════════════");
+                if (validated) {
+                    Log.d(TAG, "║ ✅ VALIDATION SUCCESSFUL");
+                    Log.d(TAG, "╠════════════════════════════════════════════════════════════════");
+                    Log.d(TAG, "║ Path: " + validationPath);
+                    Log.d(TAG, "╚════════════════════════════════════════════════════════════════");
+                } else {
+                    Log.e(TAG, "║ ❌ VALIDATION FAILED");
+                    Log.e(TAG, "╠════════════════════════════════════════════════════════════════");
+                    Log.e(TAG, "║ Could not validate server certificate with any trusted CA");
+                    Log.e(TAG, "╚════════════════════════════════════════════════════════════════");
+                    
+                    Log.e(TAG, "");
+                    Log.e(TAG, "📋 Summary:");
+                    Log.e(TAG, "  Server cert: " + serverCert.getSubjectDN());
+                    Log.e(TAG, "  Issued by:   " + serverCert.getIssuerDN());
+                    Log.e(TAG, "");
+                    Log.e(TAG, "  Available trusted CAs:");
+                    for (int caIndex = 0; caIndex < acceptedIssuers.length; caIndex++) {
+                        Log.e(TAG, "    [" + caIndex + "] " + acceptedIssuers[caIndex].getSubjectDN());
+                    }
+                    
+                    throw new CertificateException("Server certificate not trusted by any configured CA");
+                }
+                
+            } catch (CertificateException e) {
+                throw e;
+            } catch (Exception e) {
+                Log.e(TAG, "");
+                Log.e(TAG, "╔════════════════════════════════════════════════════════════════");
+                Log.e(TAG, "║ ❌ UNEXPECTED ERROR DURING VALIDATION");
+                Log.e(TAG, "╠════════════════════════════════════════════════════════════════");
+                Log.e(TAG, "║ Error: " + e.getClass().getName());
+                Log.e(TAG, "║ Message: " + e.getMessage());
+                Log.e(TAG, "╚════════════════════════════════════════════════════════════════");
+                e.printStackTrace();
+                throw new CertificateException("Certificate validation failed", e);
+            }
+        }
+        
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return acceptedIssuers;
+        }
+    }
+
     // --- Helper Methods ---
     private String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
@@ -82,72 +318,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
         }
 
         Log.d(TAG, "✅ Certificate public key MATCHES private key");
-    }
-
-    // --- Custom Socket Factory ---
-    private static class SniSocketFactory extends SSLSocketFactory {
-        private final SSLSocketFactory delegate;
-        private final String sniHost;
-
-        public SniSocketFactory(SSLSocketFactory delegate, String sniHost) {
-            this.delegate = delegate;
-            this.sniHost = sniHost;
-            Log.d(TAG, "▶▶▶ SniSocketFactory CONSTRUCTOR - SNI: " + sniHost);
-        }
-
-        @Override
-        public Socket createSocket(Socket s, String h, int p, boolean a) throws IOException {
-            Log.d(TAG, "▶▶▶ createSocket(Socket, String, int, boolean) CALLED");
-            Log.d(TAG, "  Host: " + h + ", Port: " + p + ", SNI: " + sniHost);
-
-            String effectiveHost = (sniHost != null && !sniHost.isEmpty()) ? sniHost : h;
-            SSLSocket ssl = (SSLSocket) delegate.createSocket(s, effectiveHost, p, a);
-
-            if (sniHost != null && !sniHost.isEmpty()) {
-                SSLParameters params = ssl.getSSLParameters();
-                params.setServerNames(Collections.singletonList(new SNIHostName(sniHost)));
-                ssl.setSSLParameters(params);
-                Log.d(TAG, "  ✓ SNI set to: " + sniHost);
-            }
-
-            return ssl;
-        }
-
-        @Override
-        public Socket createSocket() throws IOException {
-            Log.d(TAG, "▶▶▶ createSocket() CALLED");
-            return delegate.createSocket();
-        }
-
-        @Override
-        public Socket createSocket(String h, int p) throws IOException {
-            return delegate.createSocket(h, p);
-        }
-
-        @Override
-        public Socket createSocket(String h, int p, InetAddress l, int lp) throws IOException {
-            return delegate.createSocket(h, p, l, lp);
-        }
-
-        @Override
-        public Socket createSocket(InetAddress a, int p) throws IOException {
-            return delegate.createSocket(a, p);
-        }
-
-        @Override
-        public Socket createSocket(InetAddress a, int p, InetAddress l, int lp) throws IOException {
-            return delegate.createSocket(a, p, l, lp);
-        }
-
-        @Override
-        public String[] getDefaultCipherSuites() {
-            return delegate.getDefaultCipherSuites();
-        }
-
-        @Override
-        public String[] getSupportedCipherSuites() {
-            return delegate.getSupportedCipherSuites();
-        }
     }
 
     // --- Main Connect Method ---
@@ -192,14 +362,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     certificates.getString("rootCa"),
                     privateKeyAlias);
 
-            SSLSocketFactory socketFactory;
-            if (sniHost != null && !sniHost.isEmpty()) {
-                socketFactory = new SniSocketFactory(sslContext.getSocketFactory(), sniHost);
-                Log.d(TAG, "✓ Created SniSocketFactory");
-            } else {
-                socketFactory = sslContext.getSocketFactory();
-                Log.d(TAG, "✓ Using default factory (no SNI)");
-            }
+            // DISABLED SNI FOR DEBUGGING
+            SSLSocketFactory socketFactory = sslContext.getSocketFactory();
+            Log.d(TAG, "✓ Using default SSL factory (SNI disabled for debugging)");
 
             options.setSocketFactory(socketFactory);
 
@@ -207,13 +372,21 @@ public class MqttModule extends ReactContextBaseJavaModule {
             client.setCallback(new MqttCallbackExtended() {
                 @Override
                 public void connectComplete(boolean reconnect, String serverURI) {
-                    Log.i(TAG, "✅ MQTT Connection Complete - " + serverURI);
+                    Log.i(TAG, "╔════════════════════════════════════════════════════════════════");
+                    Log.i(TAG, "║ ✅✅✅ MQTT SUCCESSFULLY CONNECTED ✅✅✅");
+                    Log.i(TAG, "╠════════════════════════════════════════════════════════════════");
+                    Log.i(TAG, "║ Broker: " + serverURI);
+                    Log.i(TAG, "║ Reconnect: " + reconnect);
+                    Log.i(TAG, "╚════════════════════════════════════════════════════════════════");
                     sendEvent("MqttConnected", "Connected to broker: " + serverURI);
                 }
 
                 @Override
                 public void connectionLost(Throwable cause) {
                     Log.e(TAG, "❌ MQTT Connection Lost: " + (cause != null ? cause.getMessage() : "Unknown"));
+                    if (cause != null) {
+                        cause.printStackTrace();
+                    }
                     sendEvent("MqttDisconnected", "Connection lost");
                 }
 
@@ -235,14 +408,16 @@ public class MqttModule extends ReactContextBaseJavaModule {
             client.connect(options, null, new IMqttActionListener() {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
-                    Log.i(TAG, "✅✅✅ SUCCESS! MQTT CONNECTED! ✅✅✅");
+                    Log.i(TAG, "✅ MQTT Connect Action: SUCCESS");
                     if (success != null)
                         success.invoke("Connected");
                 }
 
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                    Log.e(TAG, "❌ MQTT Connection FAILED");
+                    Log.e(TAG, "╔════════════════════════════════════════════════════════════════");
+                    Log.e(TAG, "║ ❌ MQTT Connection FAILED");
+                    Log.e(TAG, "╚════════════════════════════════════════════════════════════════");
                     if (exception != null) {
                         Log.e(TAG, "Error: " + exception.getMessage());
                         exception.printStackTrace();
@@ -262,7 +437,10 @@ public class MqttModule extends ReactContextBaseJavaModule {
             String clientPem,
             String rootPem,
             String privateKeyAlias) throws Exception {
-        Log.d(TAG, "→ Creating SSLContext for: " + privateKeyAlias);
+        Log.d(TAG, "╔════════════════════════════════════════════════════════════════");
+        Log.d(TAG, "║ Creating SSLContext");
+        Log.d(TAG, "╚════════════════════════════════════════════════════════════════");
+        Log.d(TAG, "Key Alias: " + privateKeyAlias);
 
         KeyStore androidKeyStore = KeyStore.getInstance("AndroidKeyStore");
         androidKeyStore.load(null);
@@ -336,14 +514,17 @@ public class MqttModule extends ReactContextBaseJavaModule {
             i++;
         }
 
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init(trustStore);
-        Log.d(TAG, "✓ TrustManager configured with " + i + " CA cert(s)");
+        // USE CUSTOM TRUSTMANAGER (like iOS) with extensive logging
+        TrustManager[] trustManagers = new TrustManager[] {
+            new CustomTrustManager(trustStore)
+        };
+        Log.d(TAG, "✓ Custom TrustManager configured");
 
         SSLContext sc = SSLContext.getInstance("TLS");
-        sc.init(kmf.getKeyManagers(), tmf.getTrustManagers(), new SecureRandom());
+        sc.init(kmf.getKeyManagers(), trustManagers, new SecureRandom());
 
         Log.d(TAG, "✅ SSLContext created successfully");
+        Log.d(TAG, "");
         return sc;
     }
 
@@ -488,7 +669,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
         callback.invoke(connected);
     }
 
-    // --- Diagnostic Methods ---
     @ReactMethod
     public void diagnoseKeyPurposes(String privateKeyAlias, Callback callback) {
         try {
@@ -531,7 +711,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 result.append("  SIGN: ").append(hasSign ? "✓ YES" : "✗ NO").append("\n");
                 result.append("  VERIFY: ").append(hasVerify ? "✓ YES" : "✗ NO").append("\n");
 
-                // Only check PURPOSE_AGREE_KEY on Android 12+ (API 31+)
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                     boolean hasAgreeKey = (purposes & android.security.keystore.KeyProperties.PURPOSE_AGREE_KEY) != 0;
                     result.append("  AGREE_KEY: ").append(hasAgreeKey ? "✓ YES" : "✗ NO").append("\n\n");
