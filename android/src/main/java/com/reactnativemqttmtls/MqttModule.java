@@ -20,6 +20,7 @@ import javax.net.ssl.*;
 
 public class MqttModule extends ReactContextBaseJavaModule {
     private static final String TAG = "MqttModule";
+    private static final String SOFTWARE_KEYSTORE_FILE = "software_keys.p12";
     private final ReactApplicationContext reactContext;
     private MqttAndroidClient client;
 
@@ -281,7 +282,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
         }
     }
 
-    // --- Custom KeyManager for Hardware-Backed Keys ---
+    // --- Custom KeyManager for Hardware-Backed AND Software Keys ---
     private static class CustomKeyManager extends X509ExtendedKeyManager {
         private final String alias;
         private final X509Certificate[] certChain;
@@ -342,7 +343,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
         public PrivateKey getPrivateKey(String alias) {
             Log.d(TAG, "🔐 getPrivateKey called for: " + alias);
             if (this.alias.equals(alias)) {
-                Log.d(TAG, "  Returning hardware-backed private key");
+                Log.d(TAG, "  Returning private key");
                 return privateKey;
             }
             return null;
@@ -358,31 +359,23 @@ public class MqttModule extends ReactContextBaseJavaModule {
         return sb.toString();
     }
 
-    private void verifyCertMatchesKey(X509Certificate cert, String privateKeyAlias, KeyStore keyStore)
+    private void verifyCertMatchesKey(X509Certificate cert, PublicKey publicKey)
             throws Exception {
         Log.d(TAG, "→ Verifying certificate matches private key...");
 
         PublicKey certPublicKey = cert.getPublicKey();
 
-        KeyStore.Entry entry = keyStore.getEntry(privateKeyAlias, null);
-        if (!(entry instanceof KeyStore.PrivateKeyEntry)) {
-            throw new KeyException("Not a private key entry");
-        }
-
-        KeyStore.PrivateKeyEntry privateKeyEntry = (KeyStore.PrivateKeyEntry) entry;
-        PublicKey keystorePublicKey = privateKeyEntry.getCertificate().getPublicKey();
-
         byte[] certPubBytes = certPublicKey.getEncoded();
-        byte[] keystorePubBytes = keystorePublicKey.getEncoded();
+        byte[] providedPubBytes = publicKey.getEncoded();
 
         Log.d(TAG, "Cert public key (first 32 bytes): "
                 + bytesToHex(Arrays.copyOf(certPubBytes, Math.min(32, certPubBytes.length))));
-        Log.d(TAG, "Keystore public key (first 32 bytes): "
-                + bytesToHex(Arrays.copyOf(keystorePubBytes, Math.min(32, keystorePubBytes.length))));
+        Log.d(TAG, "Provided public key (first 32 bytes): "
+                + bytesToHex(Arrays.copyOf(providedPubBytes, Math.min(32, providedPubBytes.length))));
 
-        if (!Arrays.equals(certPubBytes, keystorePubBytes)) {
+        if (!Arrays.equals(certPubBytes, providedPubBytes)) {
             Log.e(TAG, "❌ CERTIFICATE PUBLIC KEY DOES NOT MATCH PRIVATE KEY!");
-            throw new KeyException("Certificate does not match the private key in keystore!");
+            throw new KeyException("Certificate does not match the private key!");
         }
 
         Log.d(TAG, "✅ Certificate public key MATCHES private key");
@@ -402,6 +395,11 @@ public class MqttModule extends ReactContextBaseJavaModule {
             String privateKeyAlias = certificates.hasKey("privateKeyAlias")
                     ? certificates.getString("privateKeyAlias")
                     : null;
+            
+            // NEW: Flag to use hardware or software key
+            boolean useHardwareKey = certificates.hasKey("useHardwareKey") 
+                    ? certificates.getBoolean("useHardwareKey") 
+                    : true;
 
             if (privateKeyAlias == null || privateKeyAlias.isEmpty()) {
                 throw new IllegalArgumentException("privateKeyAlias required");
@@ -412,6 +410,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             Log.i(TAG, "Broker: " + brokerUrl);
             Log.i(TAG, "Client ID: " + clientId);
             Log.i(TAG, "Key Alias: " + privateKeyAlias);
+            Log.i(TAG, "Key Type: " + (useHardwareKey ? "HARDWARE-BACKED" : "SOFTWARE"));
             Log.i(TAG, "========================================");
 
             client = new MqttAndroidClient(
@@ -428,7 +427,8 @@ public class MqttModule extends ReactContextBaseJavaModule {
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
                     certificates.getString("rootCa"),
-                    privateKeyAlias);
+                    privateKeyAlias,
+                    useHardwareKey);
 
             // DISABLED SNI FOR DEBUGGING
             SSLSocketFactory socketFactory = sslContext.getSocketFactory();
@@ -504,19 +504,14 @@ public class MqttModule extends ReactContextBaseJavaModule {
     private SSLContext createSSLContextFromKeystore(
             String clientPem,
             String rootPem,
-            String privateKeyAlias) throws Exception {
+            String privateKeyAlias,
+            boolean useHardwareKey) throws Exception {
+        
         Log.d(TAG, "╔════════════════════════════════════════════════════════════════");
         Log.d(TAG, "║ Creating SSLContext");
         Log.d(TAG, "╚════════════════════════════════════════════════════════════════");
         Log.d(TAG, "Key Alias: " + privateKeyAlias);
-
-        KeyStore androidKeyStore = KeyStore.getInstance("AndroidKeyStore");
-        androidKeyStore.load(null);
-
-        if (!androidKeyStore.containsAlias(privateKeyAlias)) {
-            throw new KeyException("Key not found: " + privateKeyAlias);
-        }
-        Log.d(TAG, "✓ Key found in keystore");
+        Log.d(TAG, "Key Type: " + (useHardwareKey ? "HARDWARE" : "SOFTWARE"));
 
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
 
@@ -545,9 +540,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
             certNum++;
         }
 
-        // Verify certificate matches private key
-        verifyCertMatchesKey(clientCert, privateKeyAlias, androidKeyStore);
-
         // Build certificate chain for KeyManager (exclude self-signed root CAs)
         ArrayList<X509Certificate> certChainList = new ArrayList<>();
         for (X509Certificate cert : clientCertArray) {
@@ -558,11 +550,69 @@ public class MqttModule extends ReactContextBaseJavaModule {
         }
         X509Certificate[] certChain = certChainList.toArray(new X509Certificate[0]);
 
-        // Get hardware-backed private key (keep it in AndroidKeyStore - don't extract!)
-        PrivateKey privateKey = (PrivateKey) androidKeyStore.getKey(privateKeyAlias, null);
-        Log.d(TAG, "✓ Retrieved hardware-backed private key (not extracted)");
+        PrivateKey privateKey;
+        PublicKey publicKey;
+        
+        if (useHardwareKey) {
+            // HARDWARE KEY
+            Log.d(TAG, "Loading HARDWARE-backed private key from AndroidKeyStore");
+            
+            KeyStore androidKeyStore = KeyStore.getInstance("AndroidKeyStore");
+            androidKeyStore.load(null);
+            
+            if (!androidKeyStore.containsAlias(privateKeyAlias)) {
+                throw new KeyException("Hardware key not found: " + privateKeyAlias);
+            }
+            
+            KeyStore.Entry entry = androidKeyStore.getEntry(privateKeyAlias, null);
+            if (!(entry instanceof KeyStore.PrivateKeyEntry)) {
+                throw new KeyException("Not a private key entry");
+            }
+            
+            KeyStore.PrivateKeyEntry privateKeyEntry = (KeyStore.PrivateKeyEntry) entry;
+            privateKey = privateKeyEntry.getPrivateKey();
+            publicKey = privateKeyEntry.getCertificate().getPublicKey();
+            
+            Log.d(TAG, "✓ Retrieved hardware-backed private key");
+            
+        } else {
+            // SOFTWARE KEY
+            Log.d(TAG, "Loading SOFTWARE private key from PKCS12 keystore");
+            
+            String keystorePath = getReactApplicationContext().getFilesDir() + "/" + SOFTWARE_KEYSTORE_FILE;
+            FileInputStream fis = new FileInputStream(keystorePath);
+            
+            KeyStore softwareKeyStore = KeyStore.getInstance("PKCS12");
+            softwareKeyStore.load(fis, "".toCharArray());
+            fis.close();
+            
+            if (!softwareKeyStore.containsAlias(privateKeyAlias)) {
+                throw new KeyException("Software key not found: " + privateKeyAlias);
+            }
+            
+            KeyStore.Entry entry = softwareKeyStore.getEntry(
+                privateKeyAlias, 
+                new KeyStore.PasswordProtection("".toCharArray())
+            );
+            
+            if (!(entry instanceof KeyStore.PrivateKeyEntry)) {
+                throw new KeyException("Not a private key entry");
+            }
+            
+            KeyStore.PrivateKeyEntry privateKeyEntry = (KeyStore.PrivateKeyEntry) entry;
+            privateKey = privateKeyEntry.getPrivateKey();
+            publicKey = privateKeyEntry.getCertificate().getPublicKey();
+            
+            Log.d(TAG, "✓ Retrieved SOFTWARE private key");
+        }
+        
+        Log.d(TAG, "  Algorithm: " + privateKey.getAlgorithm());
+        Log.d(TAG, "  Class: " + privateKey.getClass().getName());
 
-        // Use custom KeyManager that keeps key in AndroidKeyStore
+        // Verify certificate matches private key
+        verifyCertMatchesKey(clientCert, publicKey);
+
+        // Use custom KeyManager (works for both hardware and software keys!)
         KeyManager[] keyManagers = new KeyManager[] {
             new CustomKeyManager(privateKeyAlias, certChain, privateKey)
         };
