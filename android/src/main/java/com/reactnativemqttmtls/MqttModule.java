@@ -491,14 +491,24 @@ public class MqttModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
-    public void publish(String topic, String message, int qos, boolean retained, 
-                       Callback successCallback, Callback errorCallback) {
+    public void publish(String topic, String message, int qos, boolean retained,
+                        Callback successCallback, Callback errorCallback) {
         try {
             if (client == null || !client.isConnected()) {
                 throw new MqttException(MqttException.REASON_CODE_CLIENT_NOT_CONNECTED);
             }
 
-            MqttMessage mqttMessage = new MqttMessage(message.getBytes());
+            // Decode Base64 if it's binary data
+            byte[] payload;
+            try {
+                // Try to decode as Base64 (for binary protobuf messages)
+                payload = android.util.Base64.decode(message, android.util.Base64.NO_WRAP);
+            } catch (IllegalArgumentException e) {
+                // Not Base64, treat as plain string
+                payload = message.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            }
+
+            MqttMessage mqttMessage = new MqttMessage(payload);
             mqttMessage.setQos(qos);
             mqttMessage.setRetained(retained);
 

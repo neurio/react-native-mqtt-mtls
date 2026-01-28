@@ -32,7 +32,7 @@ interface MqttModuleType {
   ): void;
   publish(
     topic: string,
-    message: string,
+    message: string | Uint8Array,
     qos: number,
     retained: boolean,
     successCallback: (message: string) => void,

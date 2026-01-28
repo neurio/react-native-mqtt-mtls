@@ -166,7 +166,16 @@ class MqttModule: RCTEventEmitter {
         }
         
         let mqttQos = CocoaMQTTQoS(rawValue: UInt8(qos)) ?? .qos1
-        client.publish(topic, withString: message, qos: mqttQos, retained: retained)
+        
+        // Try to decode as Base64 (for binary protobuf messages)
+        if let binaryData = Data(base64Encoded: message) {
+            // It's Base64-encoded binary data
+            client.publish(topic, withData: binaryData, qos: mqttQos, retained: retained)
+        } else {
+            // It's a plain string
+            client.publish(topic, withString: message, qos: mqttQos, retained: retained)
+        }
+        
         successCallback(["Published to \(topic)"])
     }
     
