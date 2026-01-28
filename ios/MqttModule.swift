@@ -166,7 +166,16 @@ class MqttModule: RCTEventEmitter {
         }
         
         let mqttQos = CocoaMQTTQoS(rawValue: UInt8(qos)) ?? .qos1
-        client.publish(topic, withString: message, qos: mqttQos, retained: retained)
+        
+        // Try to decode as Base64 (for binary protobuf messages)
+        if let binaryData = Data(base64Encoded: message) {
+            // It's Base64-encoded binary data
+            client.publish(topic, withData: binaryData, qos: mqttQos, retained: retained)
+        } else {
+            // It's a plain string
+            client.publish(topic, withString: message, qos: mqttQos, retained: retained)
+        }
+        
         successCallback(["Published to \(topic)"])
     }
     
@@ -371,9 +380,14 @@ extension MqttModule: CocoaMQTTDelegate {
     func mqtt(_ mqtt: CocoaMQTT, didPublishAck id: UInt16) {}
     
     func mqtt(_ mqtt: CocoaMQTT, didReceiveMessage message: CocoaMQTTMessage, id: UInt16) {
+        // Encode payload as Base64 for safe transmission to JS
+        // This handles binary protobuf data correctly
+        let payloadBase64 = message.payload.base64EncodedString()
+        
         self.sendEvent(withName: "MqttMessage", body: [
             "topic": message.topic,
-            "message": message.string ?? "",
+            "message": payloadBase64,
+            "isBinary": true,
             "qos": message.qos.rawValue
         ])
     }

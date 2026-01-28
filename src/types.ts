@@ -2,6 +2,7 @@ export interface MqttMessage {
   topic: string;
   message: string;
   qos: number;
+  isBinary?: boolean;
 }
 
 export interface MqttCertificates {
