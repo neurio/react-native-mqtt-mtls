@@ -7,6 +7,8 @@ import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
+import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.bridge.Arguments;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 import info.mqtt.android.service.MqttAndroidClient;
 import org.eclipse.paho.client.mqttv3.*;
@@ -262,9 +264,25 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
                 @Override
                 public void messageArrived(String topic, MqttMessage message) {
-                    String payload = new String(message.getPayload());
-                    String eventData = "{\"topic\":\"" + topic + "\",\"message\":\"" + payload + "\"}";
-                    sendEvent("MqttMessage", eventData);
+                    try {
+                        // Encode payload as Base64 for safe transmission to JS
+                        // This handles binary protobuf data correctly
+                        String payloadBase64 = android.util.Base64.encodeToString(
+                            message.getPayload(), 
+                            android.util.Base64.NO_WRAP
+                        );
+                        
+                        WritableMap eventData = Arguments.createMap();
+                        eventData.putString("topic", topic);
+                        eventData.putString("message", payloadBase64);
+                        eventData.putBoolean("isBinary", true);
+                        
+                        reactContext
+                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                            .emit("MqttMessage", eventData);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to process MQTT message on topic " + topic, e);
+                    }
                 }
 
                 @Override

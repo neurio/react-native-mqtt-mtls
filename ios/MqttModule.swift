@@ -371,9 +371,14 @@ extension MqttModule: CocoaMQTTDelegate {
     func mqtt(_ mqtt: CocoaMQTT, didPublishAck id: UInt16) {}
     
     func mqtt(_ mqtt: CocoaMQTT, didReceiveMessage message: CocoaMQTTMessage, id: UInt16) {
+        // Encode payload as Base64 for safe transmission to JS
+        // This handles binary protobuf data correctly
+        let payloadBase64 = message.payload.base64EncodedString()
+        
         self.sendEvent(withName: "MqttMessage", body: [
             "topic": message.topic,
-            "message": message.string ?? "",
+            "message": payloadBase64,
+            "isBinary": true,
             "qos": message.qos.rawValue
         ])
     }

@@ -5,6 +5,7 @@ declare module 'react-native-mqtt-mtls' {
     topic: string;
     message: string;
     qos: number;
+    isBinary?: boolean;
   }
 
   export interface MqttCertificates {
