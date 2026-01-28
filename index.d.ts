@@ -11,6 +11,7 @@ declare module 'react-native-mqtt-mtls' {
     clientCert: string;
     privateKeyAlias: string;
     rootCa: string;
+    useHardwareKey: boolean;
   }
 
   export interface MqttConfig {
