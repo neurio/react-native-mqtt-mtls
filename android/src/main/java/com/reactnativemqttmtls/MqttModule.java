@@ -12,6 +12,7 @@ import info.mqtt.android.service.MqttAndroidClient;
 import org.eclipse.paho.client.mqttv3.*;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import java.io.*;
+import java.net.Socket;
 import java.security.*;
 import java.security.cert.*;
 import java.util.*;
