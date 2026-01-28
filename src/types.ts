@@ -8,6 +8,7 @@ export interface MqttCertificates {
   clientCert: string;
   privateKeyAlias: string;
   rootCa: string;
+  useHardwareKey: boolean;
 }
 
 export interface MqttConfig {
