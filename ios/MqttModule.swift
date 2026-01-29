@@ -38,9 +38,9 @@ class MqttModule: RCTEventEmitter {
         errorCallback: @escaping RCTResponseSenderBlock
     ) {
         do {
-            NSLog("MQTT connecting to \(broker) (client: \(clientId))")
+            NSLog("[\(TAG)] MQTT connecting to \(broker) (client: \(clientId))")
             if let expectedCN = brokerCommonName {
-                NSLog("Expected broker CN: \(expectedCN)")
+                NSLog("[\(TAG)] Expected broker CN: \(expectedCN)")
             }
             
             let clientCertPem = certificates["clientCert"] as? String
@@ -49,14 +49,14 @@ class MqttModule: RCTEventEmitter {
             
             let useHardwareKey = certificates["useHardwareKey"] as? Bool ?? false
             if useHardwareKey {
-                NSLog("Note: useHardwareKey=true (iOS uses Secure Enclave for P-256, software for others)")
+                NSLog("[\(TAG)] Note: useHardwareKey=true (iOS uses Secure Enclave for P-256, software for others)")
             }
             
             guard let rootCa = rootCaPem, 
                   let clientCert = clientCertPem, 
                   let keyAlias = privateKeyAlias else {
                 let error = "Missing required parameters (clientCert, privateKeyAlias, or rootCa)"
-                NSLog("Error: \(error)")
+                NSLog("[\(TAG)] Error: \(error)")
                 errorCallback([error])
                 return
             }
@@ -70,7 +70,7 @@ class MqttModule: RCTEventEmitter {
             let port = UInt16(url.port ?? 8883)
             let useTLS = url.scheme == "ssl" || url.scheme == "mqtts"
             
-            NSLog("Connecting to \(host):\(port) (TLS: \(useTLS))")
+            NSLog("[\(TAG)] Connecting to \(host):\(port) (TLS: \(useTLS))")
             
             let client = CocoaMQTT(clientID: clientId, host: host, port: port)
             client.username = ""
@@ -87,7 +87,7 @@ class MqttModule: RCTEventEmitter {
                 }
                 self.trustedCACertificates = caCerts
                 self.expectedBrokerCN = brokerCommonName
-                NSLog("Loaded \(caCerts.count) CA certificate(s)")
+                NSLog("[\(TAG)] Loaded \(caCerts.count) CA certificate(s)")
                 
                 let sslSettings = try self.createSSLSettings(
                     privateKeyAlias: keyAlias,
@@ -101,7 +101,7 @@ class MqttModule: RCTEventEmitter {
                 client.sslSettings = sslSettings
                 client.delegate = self
                 
-                NSLog("SSL configured (SNI: \(sniHostname ?? "none"))")
+                NSLog("[\(TAG)] SSL configured (SNI: \(sniHostname ?? "none"))")
             }
             
             self.connectSuccessCallback = successCallback
@@ -112,11 +112,11 @@ class MqttModule: RCTEventEmitter {
             
             let result = client.connect()
             if !result {
-                NSLog("MQTT connect() returned false - connection may have failed to start")
+                NSLog("[\(TAG)] MQTT connect() returned false - connection may have failed to start")
             }
             
         } catch {
-            NSLog("MQTT connection error: \(error.localizedDescription)")
+            NSLog("[\(TAG)] MQTT connection error: \(error.localizedDescription)")
             errorCallback([error.localizedDescription])
         }
     }
@@ -129,15 +129,12 @@ class MqttModule: RCTEventEmitter {
             return
         }
         
-        NSLog("MQTT disconnecting")
+        NSLog("[\(TAG)] MQTT disconnecting")
         
-        // Disable auto-reconnect before disconnecting (works on iOS)
         client.autoReconnect = false
-        
         client.disconnect()
         mqttClient = nil
         
-        // Clear pending callbacks
         connectSuccessCallback = nil
         connectErrorCallback = nil
         
@@ -153,7 +150,7 @@ class MqttModule: RCTEventEmitter {
             return
         }
         
-        NSLog("Subscribing to: \(topic)")
+        NSLog("[\(TAG)] Subscribing to: \(topic)")
         let mqttQos = CocoaMQTTQoS(rawValue: UInt8(qos)) ?? .qos1
         client.subscribe(topic, qos: mqttQos)
         successCallback(["Subscribed to \(topic)"])
@@ -168,7 +165,7 @@ class MqttModule: RCTEventEmitter {
             return
         }
         
-        NSLog("Unsubscribing from: \(topic)")
+        NSLog("[\(TAG)] Unsubscribing from: \(topic)")
         client.unsubscribe(topic)
         successCallback(["Unsubscribed from \(topic)"])
     }
@@ -188,13 +185,13 @@ class MqttModule: RCTEventEmitter {
             let payload = [UInt8](binaryData)
             let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
             client.publish(mqttMessage)
-            NSLog("Published binary data (\(payload.count) bytes) to \(topic)")
+            NSLog("[\(TAG)] Published binary data (\(payload.count) bytes) to \(topic)")
         } else {
             if let stringData = message.data(using: .utf8) {
                 let payload = [UInt8](stringData)
                 let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
                 client.publish(mqttMessage)
-                NSLog("Published string data to \(topic)")
+                NSLog("[\(TAG)] Published string data to \(topic)")
             } else {
                 errorCallback(["Failed to encode message as UTF-8"])
                 return
@@ -282,7 +279,7 @@ class MqttModule: RCTEventEmitter {
                         userInfo: [NSLocalizedDescriptionKey: "Failed to create identity: \(identityStatus)"])
         }
         
-        NSLog("Client identity created")
+        NSLog("[\(TAG)] Client identity created")
         return (identityRef as! SecIdentity)
     }
     
@@ -303,7 +300,7 @@ class MqttModule: RCTEventEmitter {
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         
         guard status == errSecSuccess else {
-            NSLog("Private key not found: \(status)")
+            NSLog("[\(TAG)] Private key not found: \(status)")
             return nil
         }
         
@@ -341,89 +338,56 @@ class MqttModule: RCTEventEmitter {
     }
     
     // ============================================================================
-    // IMPROVED CN EXTRACTION - Now works reliably on all iOS versions
+    // CN EXTRACTION
     // ============================================================================
     
     private func extractCommonName(from certificate: SecCertificate) -> String? {
-        // Method 1: Try modern API (iOS 12+)
-        if let cn = extractCNUsingCertificateCopyValues(certificate) {
+        if let cn = extractCNFromSubjectSummary(certificate) {
             return cn
         }
         
-        // Method 2: Try deprecated API (still works on some iOS versions)
-        if let cn = extractCNUsingDeprecatedAPI(certificate) {
-            return cn
-        }
-        
-        // Method 3: Parse Subject DN string manually
-        if let cn = extractCNFromSubjectString(certificate) {
-            return cn
-        }
-        
-        NSLog("Warning: Failed to extract CN from certificate using all methods")
-        return nil
-    }
-    
-    // Modern approach using SecCertificateCopyValues (iOS 12+)
-    private func extractCNUsingCertificateCopyValues(_ certificate: SecCertificate) -> String? {
-        let keys: [CFString] = [kSecOIDX509V1SubjectName]
-        guard let values = SecCertificateCopyValues(certificate, keys as CFArray, nil) as? [CFString: Any],
-              let subjectDict = values[kSecOIDX509V1SubjectName] as? [CFString: Any],
-              let subjectValue = subjectDict[kSecPropertyKeyValue] as? [[CFString: Any]] else {
-            return nil
-        }
-        
-        // Look for Common Name in subject components
-        for component in subjectValue {
-            if let label = component[kSecPropertyKeyLabel] as? String,
-               let value = component[kSecPropertyKeyValue] as? String {
-                // Check for "CN" or "Common Name"
-                if label == kSecOIDCommonName as String || 
-                   label == "CN" || 
-                   label.lowercased().contains("common name") {
-                    NSLog("CN extracted via SecCertificateCopyValues: \(value)")
-                    return value
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    // Deprecated API (still works on some iOS versions)
-    private func extractCNUsingDeprecatedAPI(_ certificate: SecCertificate) -> String? {
         var commonName: CFString?
         let status = SecCertificateCopyCommonName(certificate, &commonName)
         
         if status == errSecSuccess, let cn = commonName as String? {
-            NSLog("CN extracted via deprecated API: \(cn)")
+            NSLog("[\(TAG)] CN extracted via SecCertificateCopyCommonName: \(cn)")
             return cn
         }
         
+        NSLog("[\(TAG)] Warning: Failed to extract CN from certificate")
         return nil
     }
     
-    // Parse Subject DN string manually (most reliable fallback)
-    private func extractCNFromSubjectString(_ certificate: SecCertificate) -> String? {
-        // Get subject summary (this is usually the CN or a formatted version)
-        if let summary = SecCertificateCopySubjectSummary(certificate) as String? {
-            NSLog("Subject summary: \(summary)")
+    private func extractCNFromSubjectSummary(_ certificate: SecCertificate) -> String? {
+        guard let summary = SecCertificateCopySubjectSummary(certificate) as String? else {
+            return nil
+        }
+        
+        NSLog("[\(TAG)] Certificate subject summary: \(summary)")
+        
+        if !summary.contains("=") && !summary.contains(",") {
+            NSLog("[\(TAG)] CN extracted from subject summary: \(summary)")
+            return summary
+        }
+        
+        let components = summary.components(separatedBy: ",")
+        for component in components {
+            let trimmed = component.trimmingCharacters(in: .whitespaces)
             
-            // If summary doesn't contain comma or equals, it's likely just the CN
-            if !summary.contains(",") && !summary.contains("=") {
-                NSLog("CN extracted from subject summary: \(summary)")
-                return summary
+            if trimmed.lowercased().hasPrefix("cn=") {
+                let cn = String(trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces))
+                NSLog("[\(TAG)] CN extracted by parsing DN: \(cn)")
+                return cn
             }
-            
-            // Parse DN format: "CN=example.com, O=Org, C=US"
-            let components = summary.components(separatedBy: ",")
-            for component in components {
-                let trimmed = component.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("CN=") {
-                    let cn = String(trimmed.dropFirst(3))
-                    NSLog("CN extracted by parsing subject summary: \(cn)")
-                    return cn
-                }
+        }
+        
+        let slashComponents = summary.components(separatedBy: "/")
+        for component in slashComponents {
+            let trimmed = component.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased().hasPrefix("cn=") {
+                let cn = String(trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces))
+                NSLog("[\(TAG)] CN extracted by parsing DN (slash separator): \(cn)")
+                return cn
             }
         }
         
@@ -439,38 +403,36 @@ extension MqttModule: CocoaMQTTDelegate {
     
     func mqtt(_ mqtt: CocoaMQTT, didReceive trust: SecTrust, completionHandler: @escaping (Bool) -> Void) {
         guard !trustedCACertificates.isEmpty else {
-            NSLog("Server cert validation failed: No CA certificates configured")
+            NSLog("[\(TAG)] Server cert validation failed: No CA certificates configured")
             completionHandler(false)
             return
         }
         
-        // Extract and validate server certificate CN
         if let serverCert = SecTrustGetCertificateAtIndex(trust, 0) {
             if let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty {
                 if let actualCN = extractCommonName(from: serverCert) {
-                    NSLog("Broker certificate CN: \(actualCN)")
+                    NSLog("[\(TAG)] Broker certificate CN: \(actualCN)")
                     
                     if actualCN != expectedCN {
-                        NSLog("CN MISMATCH! Expected: \(expectedCN), Got: \(actualCN)")
+                        NSLog("[\(TAG)] CN MISMATCH! Expected: '\(expectedCN)', Got: '\(actualCN)'")
                         completionHandler(false)
                         return
                     }
                     
-                    NSLog("Broker CN validated: \(actualCN)")
+                    NSLog("[\(TAG)] Broker CN validated: \(actualCN)")
                 } else {
-                    NSLog("Failed to extract CN from broker certificate")
+                    NSLog("[\(TAG)] Failed to extract CN from broker certificate")
                     completionHandler(false)
                     return
                 }
             } else {
-                NSLog("No expected CN configured - skipping CN validation")
+                NSLog("[\(TAG)] No expected CN configured - skipping CN validation")
             }
         }
         
-        // Validate certificate chain against trusted CAs
         let status = SecTrustSetAnchorCertificates(trust, trustedCACertificates as CFArray)
         guard status == errSecSuccess else {
-            NSLog("Server cert validation failed: Could not set anchor certificates (status: \(status))")
+            NSLog("[\(TAG)] Server cert validation failed: Could not set anchor certificates (status: \(status))")
             completionHandler(false)
             return
         }
@@ -481,25 +443,25 @@ extension MqttModule: CocoaMQTTDelegate {
         let isValid = SecTrustEvaluateWithError(trust, &error)
         
         if isValid {
-            NSLog("Server certificate validated against trusted CAs")
+            NSLog("[\(TAG)] Server certificate validated against trusted CAs")
             completionHandler(true)
         } else {
             let errorDesc = error?.localizedDescription ?? "Unknown error"
-            NSLog("Server cert validation failed: \(errorDesc)")
+            NSLog("[\(TAG)] Server cert validation failed: \(errorDesc)")
             completionHandler(false)
         }
     }
     
     func mqtt(_ mqtt: CocoaMQTT, didConnectAck ack: CocoaMQTTConnAck) {
         if ack == .accept {
-            NSLog("MQTT connected to \(brokerUrl)")
+            NSLog("[\(TAG)] MQTT connected to \(brokerUrl)")
             self.sendEvent(withName: "MqttConnected", body: "Connected")
             connectSuccessCallback?(["Connected to \(brokerUrl)"])
             connectSuccessCallback = nil
             connectErrorCallback = nil
         } else {
             let error = "Connection rejected: \(ack)"
-            NSLog("MQTT connection rejected: \(ack)")
+            NSLog("[\(TAG)] MQTT connection rejected: \(ack)")
             connectErrorCallback?([error])
             connectSuccessCallback = nil
             connectErrorCallback = nil
@@ -534,7 +496,7 @@ extension MqttModule: CocoaMQTTDelegate {
     
     func mqttDidDisconnect(_ mqtt: CocoaMQTT, withError err: Error?) {
         let errorMsg = err?.localizedDescription ?? "Disconnected"
-        NSLog("MQTT disconnected: \(errorMsg)")
+        NSLog("[\(TAG)] MQTT disconnected: \(errorMsg)")
         self.sendEvent(withName: "MqttDisconnected", body: errorMsg)
     }
 }
