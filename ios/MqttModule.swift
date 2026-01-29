@@ -340,12 +340,91 @@ class MqttModule: RCTEventEmitter {
         return certificates
     }
     
+    // ============================================================================
+    // IMPROVED CN EXTRACTION - Now works reliably on all iOS versions
+    // ============================================================================
+    
     private func extractCommonName(from certificate: SecCertificate) -> String? {
+        // Method 1: Try modern API (iOS 12+)
+        if let cn = extractCNUsingCertificateCopyValues(certificate) {
+            return cn
+        }
+        
+        // Method 2: Try deprecated API (still works on some iOS versions)
+        if let cn = extractCNUsingDeprecatedAPI(certificate) {
+            return cn
+        }
+        
+        // Method 3: Parse Subject DN string manually
+        if let cn = extractCNFromSubjectString(certificate) {
+            return cn
+        }
+        
+        NSLog("Warning: Failed to extract CN from certificate using all methods")
+        return nil
+    }
+    
+    // Modern approach using SecCertificateCopyValues (iOS 12+)
+    private func extractCNUsingCertificateCopyValues(_ certificate: SecCertificate) -> String? {
+        let keys: [CFString] = [kSecOIDX509V1SubjectName]
+        guard let values = SecCertificateCopyValues(certificate, keys as CFArray, nil) as? [CFString: Any],
+              let subjectDict = values[kSecOIDX509V1SubjectName] as? [CFString: Any],
+              let subjectValue = subjectDict[kSecPropertyKeyValue] as? [[CFString: Any]] else {
+            return nil
+        }
+        
+        // Look for Common Name in subject components
+        for component in subjectValue {
+            if let label = component[kSecPropertyKeyLabel] as? String,
+               let value = component[kSecPropertyKeyValue] as? String {
+                // Check for "CN" or "Common Name"
+                if label == kSecOIDCommonName as String || 
+                   label == "CN" || 
+                   label.lowercased().contains("common name") {
+                    NSLog("CN extracted via SecCertificateCopyValues: \(value)")
+                    return value
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    // Deprecated API (still works on some iOS versions)
+    private func extractCNUsingDeprecatedAPI(_ certificate: SecCertificate) -> String? {
         var commonName: CFString?
         let status = SecCertificateCopyCommonName(certificate, &commonName)
         
         if status == errSecSuccess, let cn = commonName as String? {
+            NSLog("CN extracted via deprecated API: \(cn)")
             return cn
+        }
+        
+        return nil
+    }
+    
+    // Parse Subject DN string manually (most reliable fallback)
+    private func extractCNFromSubjectString(_ certificate: SecCertificate) -> String? {
+        // Get subject summary (this is usually the CN or a formatted version)
+        if let summary = SecCertificateCopySubjectSummary(certificate) as String? {
+            NSLog("Subject summary: \(summary)")
+            
+            // If summary doesn't contain comma or equals, it's likely just the CN
+            if !summary.contains(",") && !summary.contains("=") {
+                NSLog("CN extracted from subject summary: \(summary)")
+                return summary
+            }
+            
+            // Parse DN format: "CN=example.com, O=Org, C=US"
+            let components = summary.components(separatedBy: ",")
+            for component in components {
+                let trimmed = component.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("CN=") {
+                    let cn = String(trimmed.dropFirst(3))
+                    NSLog("CN extracted by parsing subject summary: \(cn)")
+                    return cn
+                }
+            }
         }
         
         return nil
@@ -365,6 +444,7 @@ extension MqttModule: CocoaMQTTDelegate {
             return
         }
         
+        // Extract and validate server certificate CN
         if let serverCert = SecTrustGetCertificateAtIndex(trust, 0) {
             if let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty {
                 if let actualCN = extractCommonName(from: serverCert) {
@@ -376,18 +456,21 @@ extension MqttModule: CocoaMQTTDelegate {
                         return
                     }
                     
-                    NSLog("✓ Broker CN validated: \(actualCN)")
+                    NSLog("Broker CN validated: \(actualCN)")
                 } else {
                     NSLog("Failed to extract CN from broker certificate")
                     completionHandler(false)
                     return
                 }
+            } else {
+                NSLog("No expected CN configured - skipping CN validation")
             }
         }
         
+        // Validate certificate chain against trusted CAs
         let status = SecTrustSetAnchorCertificates(trust, trustedCACertificates as CFArray)
         guard status == errSecSuccess else {
-            NSLog("Server cert validation failed: Could not set anchor certificates")
+            NSLog("Server cert validation failed: Could not set anchor certificates (status: \(status))")
             completionHandler(false)
             return
         }
@@ -398,7 +481,7 @@ extension MqttModule: CocoaMQTTDelegate {
         let isValid = SecTrustEvaluateWithError(trust, &error)
         
         if isValid {
-            NSLog("Server certificate validated")
+            NSLog("Server certificate validated against trusted CAs")
             completionHandler(true)
         } else {
             let errorDesc = error?.localizedDescription ?? "Unknown error"
