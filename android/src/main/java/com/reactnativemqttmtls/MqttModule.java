@@ -278,7 +278,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             options.setCleanSession(true);
             options.setConnectionTimeout(30);
             options.setKeepAliveInterval(60);
-            options.setAutomaticReconnect(true);  // Keep auto-reconnect enabled
+            options.setAutomaticReconnect(true);
 
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
@@ -301,14 +301,11 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     String errorMsg = cause != null ? cause.getMessage() : "Unknown";
                     Log.w(TAG, "MQTT connection lost: " + errorMsg);
                     sendEvent("MqttDisconnected", "Connection lost: " + errorMsg);
-                    // Don't invoke error callback here - auto-reconnect will handle it
                 }
 
                 @Override
                 public void messageArrived(String topic, MqttMessage message) {
                     try {
-                        // Encode payload as Base64 for safe transmission to JS
-                        // This handles binary protobuf data correctly
                         String payloadBase64 = android.util.Base64.encodeToString(
                             message.getPayload(), 
                             android.util.Base64.NO_WRAP
@@ -632,13 +629,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     successCallback.invoke("No active connection");
                 }
                 return;
-            }
-
-            // Disable auto-reconnect before disconnecting to prevent reconnection attempts
-            try {
-                client.setAutomaticReconnect(false);
-            } catch (Exception e) {
-                Log.w(TAG, "Could not disable auto-reconnect: " + e.getMessage());
             }
 
             if (client.isConnected()) {

@@ -47,7 +47,6 @@ class MqttModule: RCTEventEmitter {
             let privateKeyAlias = certificates["privateKeyAlias"] as? String
             let rootCaPem = certificates["rootCa"] as? String
             
-            // For API consistency with Android (iOS handles hardware/software transparently)
             let useHardwareKey = certificates["useHardwareKey"] as? Bool ?? false
             if useHardwareKey {
                 NSLog("Note: useHardwareKey=true (iOS uses Secure Enclave for P-256, software for others)")
@@ -78,7 +77,7 @@ class MqttModule: RCTEventEmitter {
             client.password = ""
             client.keepAlive = 60
             client.cleanSession = false
-            client.autoReconnect = true  // Keep auto-reconnect enabled
+            client.autoReconnect = true
             
             if useTLS {
                 let caCerts = try parseCertificatesFromPEM(rootCa)
@@ -132,16 +131,13 @@ class MqttModule: RCTEventEmitter {
         
         NSLog("MQTT disconnecting")
         
-        // Disable auto-reconnect before disconnecting to prevent unwanted reconnection
+        // Disable auto-reconnect before disconnecting (works on iOS)
         client.autoReconnect = false
         
-        // Disconnect
         client.disconnect()
-        
-        // Clear the client reference
         mqttClient = nil
         
-        // Clear any pending callbacks
+        // Clear pending callbacks
         connectSuccessCallback = nil
         connectErrorCallback = nil
         
@@ -188,17 +184,12 @@ class MqttModule: RCTEventEmitter {
         
         let mqttQos = CocoaMQTTQoS(rawValue: UInt8(qos)) ?? .qos1
         
-        // Try to decode as Base64 (for binary protobuf messages)
-        // This matches Android's behavior exactly
         if let binaryData = Data(base64Encoded: message) {
-            // Successfully decoded Base64 -> publish as binary data
             let payload = [UInt8](binaryData)
             let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
             client.publish(mqttMessage)
             NSLog("Published binary data (\(payload.count) bytes) to \(topic)")
         } else {
-            // Not Base64 -> treat as plain string
-            // Convert string to UTF-8 bytes
             if let stringData = message.data(using: .utf8) {
                 let payload = [UInt8](stringData)
                 let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
@@ -259,14 +250,12 @@ class MqttModule: RCTEventEmitter {
         
         let certLabel = "MQTT_CLIENT_CERT_\(privateKeyAlias)"
         
-        // Delete existing certificate if any
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
             kSecAttrLabel as String: certLabel
         ]
         SecItemDelete(deleteQuery as CFDictionary)
         
-        // Add certificate to Keychain
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
             kSecValueRef as String: certificate,
@@ -279,7 +268,6 @@ class MqttModule: RCTEventEmitter {
                         userInfo: [NSLocalizedDescriptionKey: "Failed to add certificate: \(addStatus)"])
         }
         
-        // Query for identity (cert + private key combination)
         let identityQuery: [String: Any] = [
             kSecClass as String: kSecClassIdentity,
             kSecAttrLabel as String: certLabel,
@@ -352,10 +340,6 @@ class MqttModule: RCTEventEmitter {
         return certificates
     }
     
-    // ============================================================================
-    // HELPER METHOD - Extract CN from certificate
-    // ============================================================================
-    
     private func extractCommonName(from certificate: SecCertificate) -> String? {
         var commonName: CFString?
         let status = SecCertificateCopyCommonName(certificate, &commonName)
@@ -381,9 +365,7 @@ extension MqttModule: CocoaMQTTDelegate {
             return
         }
         
-        // Extract server certificate to validate CN
         if let serverCert = SecTrustGetCertificateAtIndex(trust, 0) {
-            // Validate broker CN if expected CN is provided
             if let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty {
                 if let actualCN = extractCommonName(from: serverCert) {
                     NSLog("Broker certificate CN: \(actualCN)")
@@ -451,8 +433,6 @@ extension MqttModule: CocoaMQTTDelegate {
     func mqtt(_ mqtt: CocoaMQTT, didPublishAck id: UInt16) {}
     
     func mqtt(_ mqtt: CocoaMQTT, didReceiveMessage message: CocoaMQTTMessage, id: UInt16) {
-        // Convert [UInt8] payload to Data, then encode as Base64 for safe transmission to JS
-        // This handles binary protobuf data correctly and matches Android's behavior
         let payloadData = Data(message.payload)
         let payloadBase64 = payloadData.base64EncodedString()
         
@@ -473,6 +453,5 @@ extension MqttModule: CocoaMQTTDelegate {
         let errorMsg = err?.localizedDescription ?? "Disconnected"
         NSLog("MQTT disconnected: \(errorMsg)")
         self.sendEvent(withName: "MqttDisconnected", body: errorMsg)
-        // Don't invoke error callback here - auto-reconnect will handle it
     }
 }
