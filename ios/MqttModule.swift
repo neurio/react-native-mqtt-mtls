@@ -168,12 +168,25 @@ class MqttModule: RCTEventEmitter {
         let mqttQos = CocoaMQTTQoS(rawValue: UInt8(qos)) ?? .qos1
         
         // Try to decode as Base64 (for binary protobuf messages)
+        // This matches Android's behavior exactly
         if let binaryData = Data(base64Encoded: message) {
-            // It's Base64-encoded binary data
-            client.publish(topic, withData: binaryData, qos: mqttQos, retained: retained)
+            // Successfully decoded Base64 -> publish as binary data
+            let payload = [UInt8](binaryData)
+            let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
+            client.publish(mqttMessage)
+            NSLog("Published binary data (\(payload.count) bytes) to \(topic)")
         } else {
-            // It's a plain string
-            client.publish(topic, withString: message, qos: mqttQos, retained: retained)
+            // Not Base64 -> treat as plain string
+            // Convert string to UTF-8 bytes
+            if let stringData = message.data(using: .utf8) {
+                let payload = [UInt8](stringData)
+                let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
+                client.publish(mqttMessage)
+                NSLog("Published string data to \(topic)")
+            } else {
+                errorCallback(["Failed to encode message as UTF-8"])
+                return
+            }
         }
         
         successCallback(["Published to \(topic)"])
@@ -380,9 +393,10 @@ extension MqttModule: CocoaMQTTDelegate {
     func mqtt(_ mqtt: CocoaMQTT, didPublishAck id: UInt16) {}
     
     func mqtt(_ mqtt: CocoaMQTT, didReceiveMessage message: CocoaMQTTMessage, id: UInt16) {
-        // Encode payload as Base64 for safe transmission to JS
-        // This handles binary protobuf data correctly
-        let payloadBase64 = message.payload.base64EncodedString()
+        // Convert [UInt8] payload to Data, then encode as Base64 for safe transmission to JS
+        // This handles binary protobuf data correctly and matches Android's behavior
+        let payloadData = Data(message.payload)
+        let payloadBase64 = payloadData.base64EncodedString()
         
         self.sendEvent(withName: "MqttMessage", body: [
             "topic": message.topic,
