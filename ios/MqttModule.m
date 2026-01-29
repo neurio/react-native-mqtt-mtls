@@ -10,6 +10,7 @@
  * @param certificates - Dictionary containing clientCert, privateKeyAlias, rootCa
  * @param sniHostname - SNI hostname for TLS (optional)
  * @param brokerIp - Explicit broker IP address (optional)
+ * @param brokerCommonName - Expected Common Name in broker's certificate (optional)
  * @param successCallback - Called on successful connection
  * @param errorCallback - Called on connection failure
  */
@@ -18,6 +19,7 @@ RCT_EXTERN_METHOD(connect:(NSString *)broker
                   certificates:(NSDictionary *)certificates
                   sniHostname:(NSString *)sniHostname
                   brokerIp:(NSString *)brokerIp
+                  brokerCommonName:(NSString *)brokerCommonName
                   successCallback:(RCTResponseSenderBlock)successCallback
                   errorCallback:(RCTResponseSenderBlock)errorCallback)
 

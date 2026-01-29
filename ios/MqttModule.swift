@@ -7,6 +7,7 @@ import React
 class MqttModule: RCTEventEmitter {
     private var mqttClient: CocoaMQTT?
     private var trustedCACertificates: [SecCertificate] = []
+    private var expectedBrokerCN: String?
     private var connectSuccessCallback: RCTResponseSenderBlock?
     private var connectErrorCallback: RCTResponseSenderBlock?
     private var brokerUrl: String = ""
@@ -32,11 +33,15 @@ class MqttModule: RCTEventEmitter {
         certificates: NSDictionary,
         sniHostname: String?,
         brokerIp: String?,
+        brokerCommonName: String?,
         successCallback: @escaping RCTResponseSenderBlock,
         errorCallback: @escaping RCTResponseSenderBlock
     ) {
         do {
             NSLog("MQTT connecting to \(broker) (client: \(clientId))")
+            if let expectedCN = brokerCommonName {
+                NSLog("Expected broker CN: \(expectedCN)")
+            }
             
             let clientCertPem = certificates["clientCert"] as? String
             let privateKeyAlias = certificates["privateKeyAlias"] as? String
@@ -82,6 +87,7 @@ class MqttModule: RCTEventEmitter {
                                 userInfo: [NSLocalizedDescriptionKey: "No CA certificates found"])
                 }
                 self.trustedCACertificates = caCerts
+                self.expectedBrokerCN = brokerCommonName
                 NSLog("Loaded \(caCerts.count) CA certificate(s)")
                 
                 let sslSettings = try self.createSSLSettings(
@@ -330,6 +336,21 @@ class MqttModule: RCTEventEmitter {
         
         return certificates
     }
+    
+    // ============================================================================
+    // HELPER METHOD - Extract CN from certificate
+    // ============================================================================
+    
+    private func extractCommonName(from certificate: SecCertificate) -> String? {
+        var commonName: CFString?
+        let status = SecCertificateCopyCommonName(certificate, &commonName)
+        
+        if status == errSecSuccess, let cn = commonName as String? {
+            return cn
+        }
+        
+        return nil
+    }
 }
 
 // ============================================================================
@@ -343,6 +364,28 @@ extension MqttModule: CocoaMQTTDelegate {
             NSLog("Server cert validation failed: No CA certificates configured")
             completionHandler(false)
             return
+        }
+        
+        // Extract server certificate to validate CN
+        if let serverCert = SecTrustGetCertificateAtIndex(trust, 0) {
+            // Validate broker CN if expected CN is provided
+            if let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty {
+                if let actualCN = extractCommonName(from: serverCert) {
+                    NSLog("Broker certificate CN: \(actualCN)")
+                    
+                    if actualCN != expectedCN {
+                        NSLog("CN MISMATCH! Expected: \(expectedCN), Got: \(actualCN)")
+                        completionHandler(false)
+                        return
+                    }
+                    
+                    NSLog("✓ Broker CN validated: \(actualCN)")
+                } else {
+                    NSLog("Failed to extract CN from broker certificate")
+                    completionHandler(false)
+                    return
+                }
+            }
         }
         
         let status = SecTrustSetAnchorCertificates(trust, trustedCACertificates as CFArray)
