@@ -65,7 +65,6 @@ export const MqttProvider = ({ children }) => {
   const connect = useCallback(async (config) => {
     try {
       configRef.current = config;
-      
       return new Promise((resolve, reject) => {
         MqttModule.connect(
           config.broker,
@@ -73,6 +72,7 @@ export const MqttProvider = ({ children }) => {
           config.certificates,
           config.sniHostname,
           config.brokerIp,
+          config.brokerCommonName,
           (success) => {
             console.log('Connect success:', success);
             resolve(success);

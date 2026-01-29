@@ -20,6 +20,7 @@ declare module 'react-native-mqtt-mtls' {
     clientId: string;
     sniHostname?: string;
     brokerIp?: string;
+    brokerCommonName?: string;
     certificates: MqttCertificates;
     onMessage?: (message: MqttMessage) => void;
     onConnect?: () => void;
@@ -57,6 +58,7 @@ declare module 'react-native-mqtt-mtls' {
       certificates: MqttCertificates,
       sniHostname: string | null,
       brokerIp: string | null,
+      brokerCommonName: string | null,
       successCallback: (message: string) => void,
       errorCallback: (error: string) => void
     ): void;

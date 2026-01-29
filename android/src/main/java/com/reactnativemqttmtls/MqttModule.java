@@ -49,13 +49,16 @@ public class MqttModule extends ReactContextBaseJavaModule {
     }
 
     // ============================================================================
-    // CUSTOM TRUSTMANAGER - Server certificate validation
+    // CUSTOM TRUSTMANAGER - Server certificate validation with CN check
     // ============================================================================
     
     private static class CustomTrustManager implements X509TrustManager {
         private final X509Certificate[] acceptedIssuers;
+        private final String expectedBrokerCN;
         
-        public CustomTrustManager(KeyStore trustStore) throws Exception {
+        public CustomTrustManager(KeyStore trustStore, String expectedBrokerCN) throws Exception {
+            this.expectedBrokerCN = expectedBrokerCN;
+            
             List<X509Certificate> certs = new ArrayList<>();
             Enumeration<String> aliases = trustStore.aliases();
             
@@ -69,6 +72,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
             
             this.acceptedIssuers = certs.toArray(new X509Certificate[0]);
             Log.d(TAG, "CustomTrustManager initialized with " + acceptedIssuers.length + " CA(s)");
+            if (expectedBrokerCN != null && !expectedBrokerCN.isEmpty()) {
+                Log.d(TAG, "Expected broker CN: " + expectedBrokerCN);
+            }
         }
         
         @Override
@@ -83,6 +89,21 @@ public class MqttModule extends ReactContextBaseJavaModule {
             }
             
             X509Certificate serverCert = chain[0];
+            
+            // Validate broker certificate CN matches expected value
+            if (expectedBrokerCN != null && !expectedBrokerCN.isEmpty()) {
+                String brokerCN = extractCN(serverCert);
+                Log.d(TAG, "Broker certificate CN: " + brokerCN);
+                
+                if (!expectedBrokerCN.equals(brokerCN)) {
+                    Log.e(TAG, "CN MISMATCH! Expected: " + expectedBrokerCN + ", Got: " + brokerCN);
+                    throw new CertificateException(
+                        "Broker CN mismatch. Expected: " + expectedBrokerCN + ", Got: " + brokerCN
+                    );
+                }
+                Log.d(TAG, "✓ Broker CN validated: " + brokerCN);
+            }
+            
             boolean validated = false;
             
             // Try direct validation (server cert signed by one of our CAs)
@@ -145,6 +166,22 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 Log.e(TAG, "Server certificate validation failed - not trusted by any CA");
                 throw new CertificateException("Server certificate not trusted by any configured CA");
             }
+        }
+        
+        private String extractCN(X509Certificate cert) {
+            try {
+                String dn = cert.getSubjectX500Principal().getName();
+                // Parse DN to extract CN
+                for (String part : dn.split(",")) {
+                    String trimmed = part.trim();
+                    if (trimmed.startsWith("CN=")) {
+                        return trimmed.substring(3);
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to extract CN from certificate", e);
+            }
+            return null;
         }
         
         @Override
@@ -211,6 +248,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             ReadableMap certificates,
             String sniHost,
             String brokerIp,
+            String brokerCommonName,
             final Callback success,
             final Callback error) {
         try {
@@ -228,6 +266,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             }
 
             Log.i(TAG, "MQTT connection to " + brokerUrl + " (client: " + clientId + ")");
+            Log.i(TAG, "Expected broker CN: " + brokerCommonName);
             Log.i(TAG, "Key: " + privateKeyAlias + " (" + (useHardwareKey ? "hardware" : "software") + ")");
 
             client = new MqttAndroidClient(
@@ -245,7 +284,8 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     certificates.getString("clientCert"),
                     certificates.getString("rootCa"),
                     privateKeyAlias,
-                    useHardwareKey);
+                    useHardwareKey,
+                    brokerCommonName);
 
             options.setSocketFactory(sslContext.getSocketFactory());
 
@@ -319,7 +359,8 @@ public class MqttModule extends ReactContextBaseJavaModule {
             String clientPem,
             String rootPem,
             String privateKeyAlias,
-            boolean useHardwareKey) throws Exception {
+            boolean useHardwareKey,
+            String expectedBrokerCN) throws Exception {
         
         Log.d(TAG, "Creating SSL context (" + (useHardwareKey ? "hardware" : "software") + " key)");
 
@@ -403,7 +444,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             new CustomKeyManager(privateKeyAlias, certChain, privateKey)
         };
 
-        // Setup TrustManager
+        // Setup TrustManager with expected broker CN
         KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
         trustStore.load(null, null);
         int i = 0;
@@ -412,7 +453,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
         }
 
         TrustManager[] trustManagers = new TrustManager[] {
-            new CustomTrustManager(trustStore)
+            new CustomTrustManager(trustStore, expectedBrokerCN)
         };
 
         // Create SSL context with TLS 1.3

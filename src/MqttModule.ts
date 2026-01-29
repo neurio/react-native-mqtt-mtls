@@ -12,6 +12,7 @@ interface MqttModuleType {
     certificates: MqttCertificates,
     sniHostname: string | null,
     brokerIp: string | null,
+    brokerCommonName: string | null,
     successCallback: (message: string) => void,
     errorCallback: (error: string) => void
   ): void;

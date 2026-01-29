@@ -1,6 +1,6 @@
 {
   "name": "react-native-mqtt-mtls",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A React Native MQTT client with mTLS (mutual TLS) support",
   "main": "index.ts",
   "types": "index.d.ts",
@@ -18,7 +18,7 @@
     "iot",
     "messaging"
   ],
-  "author": "coderscode2",
+  "author": "Ved Yedla",
   "license": "MIT",
   "repository": {
     "type": "git",
