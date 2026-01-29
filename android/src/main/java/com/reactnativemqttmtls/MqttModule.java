@@ -292,21 +292,20 @@ public class MqttModule extends ReactContextBaseJavaModule {
             client.setCallback(new MqttCallbackExtended() {
                 @Override
                 public void connectComplete(boolean reconnect, String serverURI) {
-                    Log.i(TAG, "MQTT connected to " + serverURI);
+                    Log.i(TAG, "MQTT connected to " + serverURI + (reconnect ? " (reconnected)" : ""));
                     sendEvent("MqttConnected", "Connected to broker: " + serverURI);
                 }
 
                 @Override
                 public void connectionLost(Throwable cause) {
-                    Log.w(TAG, "MQTT connection lost: " + (cause != null ? cause.getMessage() : "Unknown"));
-                    sendEvent("MqttDisconnected", "Connection lost");
+                    String errorMsg = cause != null ? cause.getMessage() : "Unknown";
+                    Log.w(TAG, "MQTT connection lost: " + errorMsg);
+                    sendEvent("MqttDisconnected", "Connection lost: " + errorMsg);
                 }
 
                 @Override
                 public void messageArrived(String topic, MqttMessage message) {
                     try {
-                        // Encode payload as Base64 for safe transmission to JS
-                        // This handles binary protobuf data correctly
                         String payloadBase64 = android.util.Base64.encodeToString(
                             message.getPayload(), 
                             android.util.Base64.NO_WRAP
@@ -335,19 +334,48 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
                     Log.i(TAG, "MQTT connection successful");
-                    if (success != null) success.invoke("Connected");
+                    if (success != null) {
+                        try {
+                            success.invoke("Connected");
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error invoking success callback", e);
+                        }
+                    }
                 }
 
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                    Log.e(TAG, "MQTT connection failed: " + (exception != null ? exception.getMessage() : "Unknown"));
-                    if (exception != null) exception.printStackTrace();
-                    if (error != null) error.invoke(exception != null ? exception.getMessage() : "Unknown");
+                    String errorMessage = "Connection failed";
+                    
+                    if (exception != null) {
+                        errorMessage = exception.getMessage();
+                        if (errorMessage == null || errorMessage.isEmpty()) {
+                            errorMessage = exception.getClass().getSimpleName();
+                        }
+                        Log.e(TAG, "MQTT connection failed", exception);
+                    } else {
+                        Log.e(TAG, "MQTT connection failed: Unknown error");
+                    }
+                    
+                    if (error != null) {
+                        try {
+                            error.invoke(errorMessage);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error invoking error callback", e);
+                        }
+                    }
                 }
             });
         } catch (Exception e) {
             Log.e(TAG, "MQTT setup error", e);
-            if (error != null) error.invoke(e.getMessage());
+            e.printStackTrace();
+            if (error != null) {
+                try {
+                    error.invoke(e.getMessage() != null ? e.getMessage() : "Setup failed");
+                } catch (Exception callbackException) {
+                    Log.e(TAG, "Error invoking error callback", callbackException);
+                }
+            }
         }
     }
 
@@ -488,19 +516,26 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
                     Log.i(TAG, "Subscribed to: " + topic);
-                    successCallback.invoke("Subscribed to " + topic);
+                    if (successCallback != null) {
+                        successCallback.invoke("Subscribed to " + topic);
+                    }
                 }
 
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                    Log.e(TAG, "Subscribe failed: " + exception.getMessage());
-                    errorCallback.invoke("Subscribe failed: " + exception.getMessage());
+                    String errorMsg = exception != null ? exception.getMessage() : "Subscribe failed";
+                    Log.e(TAG, "Subscribe failed: " + errorMsg);
+                    if (errorCallback != null) {
+                        errorCallback.invoke("Subscribe failed: " + errorMsg);
+                    }
                 }
             });
 
         } catch (Exception e) {
             Log.e(TAG, "Subscribe error", e);
-            errorCallback.invoke("Subscribe failed: " + e.getMessage());
+            if (errorCallback != null) {
+                errorCallback.invoke("Subscribe failed: " + e.getMessage());
+            }
         }
     }
 
@@ -515,19 +550,26 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
                     Log.i(TAG, "Unsubscribed from: " + topic);
-                    successCallback.invoke("Unsubscribed from " + topic);
+                    if (successCallback != null) {
+                        successCallback.invoke("Unsubscribed from " + topic);
+                    }
                 }
 
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                    Log.e(TAG, "Unsubscribe failed: " + exception.getMessage());
-                    errorCallback.invoke("Unsubscribe failed: " + exception.getMessage());
+                    String errorMsg = exception != null ? exception.getMessage() : "Unsubscribe failed";
+                    Log.e(TAG, "Unsubscribe failed: " + errorMsg);
+                    if (errorCallback != null) {
+                        errorCallback.invoke("Unsubscribe failed: " + errorMsg);
+                    }
                 }
             });
 
         } catch (Exception e) {
             Log.e(TAG, "Unsubscribe error", e);
-            errorCallback.invoke("Unsubscribe failed: " + e.getMessage());
+            if (errorCallback != null) {
+                errorCallback.invoke("Unsubscribe failed: " + e.getMessage());
+            }
         }
     }
 
@@ -556,19 +598,26 @@ public class MqttModule extends ReactContextBaseJavaModule {
             client.publish(topic, mqttMessage, null, new IMqttActionListener() {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
-                    successCallback.invoke("Published to " + topic);
+                    if (successCallback != null) {
+                        successCallback.invoke("Published to " + topic);
+                    }
                 }
 
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                    Log.e(TAG, "Publish failed: " + exception.getMessage());
-                    errorCallback.invoke("Publish failed: " + exception.getMessage());
+                    String errorMsg = exception != null ? exception.getMessage() : "Publish failed";
+                    Log.e(TAG, "Publish failed: " + errorMsg);
+                    if (errorCallback != null) {
+                        errorCallback.invoke("Publish failed: " + errorMsg);
+                    }
                 }
             });
 
         } catch (Exception e) {
             Log.e(TAG, "Publish error", e);
-            errorCallback.invoke("Publish failed: " + e.getMessage());
+            if (errorCallback != null) {
+                errorCallback.invoke("Publish failed: " + e.getMessage());
+            }
         }
     }
 
@@ -576,7 +625,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
     public void disconnect(Callback successCallback, Callback errorCallback) {
         try {
             if (client == null) {
-                successCallback.invoke("No active connection");
+                if (successCallback != null) {
+                    successCallback.invoke("No active connection");
+                }
                 return;
             }
 
@@ -588,34 +639,74 @@ public class MqttModule extends ReactContextBaseJavaModule {
                             client.close();
                             client = null;
                             Log.i(TAG, "MQTT disconnected");
-                            successCallback.invoke("Disconnected successfully");
+                            if (successCallback != null) {
+                                successCallback.invoke("Disconnected successfully");
+                            }
                         } catch (Exception e) {
-                            errorCallback.invoke("Disconnect error: " + e.getMessage());
+                            Log.e(TAG, "Error closing client", e);
+                            if (errorCallback != null) {
+                                errorCallback.invoke("Disconnect error: " + e.getMessage());
+                            }
                         }
                     }
 
                     @Override
                     public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                        Log.e(TAG, "Disconnect failed: " + exception.getMessage());
-                        errorCallback.invoke("Disconnect failed: " + exception.getMessage());
+                        String errorMsg = exception != null ? exception.getMessage() : "Disconnect failed";
+                        Log.e(TAG, "Disconnect failed: " + errorMsg);
+                        
+                        // Try to close anyway
+                        try {
+                            if (client != null) {
+                                client.close();
+                                client = null;
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error force-closing client", e);
+                        }
+                        
+                        if (errorCallback != null) {
+                            errorCallback.invoke("Disconnect failed: " + errorMsg);
+                        }
                     }
                 });
             } else {
-                client.close();
+                try {
+                    client.close();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error closing disconnected client", e);
+                }
                 client = null;
-                successCallback.invoke("Disconnected successfully");
+                if (successCallback != null) {
+                    successCallback.invoke("Disconnected successfully");
+                }
             }
 
         } catch (Exception e) {
             Log.e(TAG, "Disconnect error", e);
-            errorCallback.invoke("Disconnect failed: " + e.getMessage());
+            
+            // Try to cleanup
+            try {
+                if (client != null) {
+                    client.close();
+                    client = null;
+                }
+            } catch (Exception cleanupException) {
+                Log.e(TAG, "Cleanup error", cleanupException);
+            }
+            
+            if (errorCallback != null) {
+                errorCallback.invoke("Disconnect failed: " + e.getMessage());
+            }
         }
     }
 
     @ReactMethod
     public void isConnected(Callback callback) {
         boolean connected = (client != null && client.isConnected());
-        callback.invoke(connected);
+        if (callback != null) {
+            callback.invoke(connected);
+        }
     }
 
     // ============================================================================
@@ -629,13 +720,17 @@ public class MqttModule extends ReactContextBaseJavaModule {
             keyStore.load(null);
 
             if (!keyStore.containsAlias(privateKeyAlias)) {
-                callback.invoke("ERROR: Key not found: " + privateKeyAlias);
+                if (callback != null) {
+                    callback.invoke("ERROR: Key not found: " + privateKeyAlias);
+                }
                 return;
             }
 
             KeyStore.Entry entry = keyStore.getEntry(privateKeyAlias, null);
             if (!(entry instanceof KeyStore.PrivateKeyEntry)) {
-                callback.invoke("ERROR: Not a private key entry");
+                if (callback != null) {
+                    callback.invoke("ERROR: Not a private key entry");
+                }
                 return;
             }
 
@@ -677,10 +772,14 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 result.append("Error: ").append(e.getMessage()).append("\n");
             }
 
-            callback.invoke(result.toString());
+            if (callback != null) {
+                callback.invoke(result.toString());
+            }
 
         } catch (Exception e) {
-            callback.invoke("ERROR: " + e.getMessage());
+            if (callback != null) {
+                callback.invoke("ERROR: " + e.getMessage());
+            }
         }
     }
 
@@ -689,9 +788,13 @@ public class MqttModule extends ReactContextBaseJavaModule {
         try {
             KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
             keyStore.load(null);
-            callback.invoke(keyStore.containsAlias(privateKeyAlias));
+            if (callback != null) {
+                callback.invoke(keyStore.containsAlias(privateKeyAlias));
+            }
         } catch (Exception e) {
-            callback.invoke(false);
+            if (callback != null) {
+                callback.invoke(false);
+            }
         }
     }
 
@@ -705,9 +808,13 @@ public class MqttModule extends ReactContextBaseJavaModule {
             while (aliases.hasMoreElements()) {
                 sb.append("- ").append(aliases.nextElement()).append("\n");
             }
-            callback.invoke(sb.toString());
+            if (callback != null) {
+                callback.invoke(sb.toString());
+            }
         } catch (Exception e) {
-            callback.invoke("Error: " + e.getMessage());
+            if (callback != null) {
+                callback.invoke("Error: " + e.getMessage());
+            }
         }
     }
 
