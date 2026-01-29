@@ -78,7 +78,7 @@ class MqttModule: RCTEventEmitter {
             client.password = ""
             client.keepAlive = 60
             client.cleanSession = false
-            client.autoReconnect = true
+            client.autoReconnect = true  // Keep auto-reconnect enabled
             
             if useTLS {
                 let caCerts = try parseCertificatesFromPEM(rootCa)
@@ -111,7 +111,10 @@ class MqttModule: RCTEventEmitter {
             self.clientIdentifier = clientId
             self.mqttClient = client
             
-            _ = client.connect()
+            let result = client.connect()
+            if !result {
+                NSLog("MQTT connect() returned false - connection may have failed to start")
+            }
             
         } catch {
             NSLog("MQTT connection error: \(error.localizedDescription)")
@@ -123,14 +126,26 @@ class MqttModule: RCTEventEmitter {
     func disconnect(_ successCallback: @escaping RCTResponseSenderBlock,
                    errorCallback: @escaping RCTResponseSenderBlock) {
         guard let client = mqttClient else {
-            errorCallback(["No active connection"])
+            successCallback(["No active connection"])
             return
         }
         
         NSLog("MQTT disconnecting")
+        
+        // Disable auto-reconnect before disconnecting to prevent unwanted reconnection
+        client.autoReconnect = false
+        
+        // Disconnect
         client.disconnect()
+        
+        // Clear the client reference
         mqttClient = nil
-        successCallback(["Disconnected"])
+        
+        // Clear any pending callbacks
+        connectSuccessCallback = nil
+        connectErrorCallback = nil
+        
+        successCallback(["Disconnected successfully"])
     }
     
     @objc
@@ -458,5 +473,6 @@ extension MqttModule: CocoaMQTTDelegate {
         let errorMsg = err?.localizedDescription ?? "Disconnected"
         NSLog("MQTT disconnected: \(errorMsg)")
         self.sendEvent(withName: "MqttDisconnected", body: errorMsg)
+        // Don't invoke error callback here - auto-reconnect will handle it
     }
 }
