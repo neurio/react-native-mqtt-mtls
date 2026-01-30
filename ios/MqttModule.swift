@@ -2,6 +2,7 @@ import Foundation
 import CocoaMQTT
 import Security
 import React
+import os.log
 
 @objc(MqttModule)
 class MqttModule: RCTEventEmitter {
@@ -12,10 +13,17 @@ class MqttModule: RCTEventEmitter {
     private var connectErrorCallback: RCTResponseSenderBlock?
     private var brokerUrl: String = ""
     private var clientIdentifier: String = ""
-    private let TAG = "MqttModule"
+    private var connectionStartTime: Date?
+    
+    private let logger = OSLog(subsystem: "com.neurio.generachome", category: "MqttModule")
     
     override init() {
         super.init()
+        os_log("=====================================", log: logger, type: .info)
+        os_log("MqttModule initialized", log: logger, type: .info)
+        os_log("iOS Version: %{public}@", log: logger, type: .info, UIDevice.current.systemVersion)
+        os_log("Device Model: %{public}@", log: logger, type: .info, UIDevice.current.model)
+        os_log("=====================================", log: logger, type: .info)
     }
     
     override func supportedEvents() -> [String]! {
@@ -37,29 +45,68 @@ class MqttModule: RCTEventEmitter {
         successCallback: @escaping RCTResponseSenderBlock,
         errorCallback: @escaping RCTResponseSenderBlock
     ) {
+        connectionStartTime = Date()
+        
+        os_log("", log: logger, type: .info)
+        os_log("═══════════════════════════════════════════════════════", log: logger, type: .info)
+        os_log("MQTT CONNECTION ATTEMPT STARTED", log: logger, type: .info)
+        os_log("═══════════════════════════════════════════════════════", log: logger, type: .info)
+        os_log("Timestamp: %{public}@", log: logger, type: .info, ISO8601DateFormatter().string(from: Date()))
+        os_log("Broker URL: %{public}@", log: logger, type: .info, broker)
+        os_log("Client ID: %{public}@", log: logger, type: .info, clientId)
+        os_log("SNI Hostname: %{public}@", log: logger, type: .info, sniHostname ?? "nil")
+        os_log("Broker IP: %{public}@", log: logger, type: .info, brokerIp ?? "nil")
+        os_log("Expected Broker CN: %{public}@", log: logger, type: .info, brokerCommonName ?? "nil")
+        os_log("", log: logger, type: .info)
+        
         do {
-            NSLog("[\(TAG)] MQTT connecting to \(broker) (client: \(clientId))")
-            if let expectedCN = brokerCommonName {
-                NSLog("[\(TAG)] Expected broker CN: \(expectedCN)")
-            }
+            os_log("STEP 1: Validating parameters...", log: logger, type: .info)
             
             let clientCertPem = certificates["clientCert"] as? String
             let privateKeyAlias = certificates["privateKeyAlias"] as? String
             let rootCaPem = certificates["rootCa"] as? String
-            
             let useHardwareKey = certificates["useHardwareKey"] as? Bool ?? false
-            if useHardwareKey {
-                NSLog("[\(TAG)] Note: useHardwareKey=true (iOS uses Secure Enclave for P-256, software for others)")
+            
+            os_log("  - clientCert present: %{public}@", log: logger, type: .info, String(clientCertPem != nil))
+            os_log("  - privateKeyAlias: %{public}@", log: logger, type: .info, privateKeyAlias ?? "nil")
+            os_log("  - rootCa present: %{public}@", log: logger, type: .info, String(rootCaPem != nil))
+            os_log("  - useHardwareKey: %{public}@", log: logger, type: .info, String(useHardwareKey))
+            
+            if let certPem = clientCertPem {
+                let certLength = certPem.count
+                let certLines = certPem.components(separatedBy: "\n").count
+                os_log("  - clientCert length: %d characters, %d lines", log: logger, type: .info, certLength, certLines)
+            }
+            
+            if let caPem = rootCaPem {
+                let caLength = caPem.count
+                let caLines = caPem.components(separatedBy: "\n").count
+                os_log("  - rootCa length: %d characters, %d lines", log: logger, type: .info, caLength, caLines)
             }
             
             guard let rootCa = rootCaPem, 
                   let clientCert = clientCertPem, 
                   let keyAlias = privateKeyAlias else {
                 let error = "Missing required parameters (clientCert, privateKeyAlias, or rootCa)"
-                NSLog("[\(TAG)] Error: \(error)")
+                os_log("ERROR: %{public}@", log: logger, type: .error, error)
                 errorCallback([error])
                 return
             }
+            
+            os_log("✓ All required parameters present", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            
+            guard let expectedCN = brokerCommonName, !expectedCN.isEmpty else {
+                let error = "Security error: brokerCommonName is required for CN validation"
+                os_log("ERROR: %{public}@", log: logger, type: .error, error)
+                errorCallback([error])
+                return
+            }
+            
+            os_log("✓ Broker CN validation enabled: %{public}@", log: logger, type: .info, expectedCN)
+            os_log("", log: logger, type: .info)
+            
+            os_log("STEP 2: Parsing broker URL...", log: logger, type: .info)
             
             guard let url = URL(string: broker) else {
                 throw NSError(domain: "MqttModule", code: -1,
@@ -70,53 +117,118 @@ class MqttModule: RCTEventEmitter {
             let port = UInt16(url.port ?? 8883)
             let useTLS = url.scheme == "ssl" || url.scheme == "mqtts"
             
-            NSLog("[\(TAG)] Connecting to \(host):\(port) (TLS: \(useTLS))")
+            os_log("  - Scheme: %{public}@", log: logger, type: .info, url.scheme ?? "nil")
+            os_log("  - Host: %{public}@", log: logger, type: .info, host)
+            os_log("  - Port: %d", log: logger, type: .info, port)
+            os_log("  - Use TLS: %{public}@", log: logger, type: .info, String(useTLS))
+            os_log("✓ URL parsed successfully", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            
+            os_log("STEP 3: Creating CocoaMQTT client...", log: logger, type: .info)
             
             let client = CocoaMQTT(clientID: clientId, host: host, port: port)
+            os_log("  - Client instance created", log: logger, type: .info)
+            
             client.username = ""
             client.password = ""
             client.keepAlive = 60
             client.cleanSession = false
             client.autoReconnect = true
             
+            os_log("  - keepAlive: 60 seconds", log: logger, type: .info)
+            os_log("  - cleanSession: false", log: logger, type: .info)
+            os_log("  - autoReconnect: true", log: logger, type: .info)
+            os_log("✓ Client configured", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            
             if useTLS {
+                os_log("STEP 4: Configuring TLS/SSL...", log: logger, type: .info)
+                
+                os_log("  4a: Parsing CA certificates...", log: logger, type: .info)
                 let caCerts = try parseCertificatesFromPEM(rootCa)
+                os_log("    - Found %d CA certificate(s)", log: logger, type: .info, caCerts.count)
+                
                 guard !caCerts.isEmpty else {
                     throw NSError(domain: "MqttModule", code: -1,
                                 userInfo: [NSLocalizedDescriptionKey: "No CA certificates found"])
                 }
+                
+                for (index, cert) in caCerts.enumerated() {
+                    if let summary = SecCertificateCopySubjectSummary(cert) as String? {
+                        os_log("    - CA %d: %{public}@", log: logger, type: .info, index + 1, summary)
+                    }
+                }
+                
                 self.trustedCACertificates = caCerts
-                self.expectedBrokerCN = brokerCommonName
-                NSLog("[\(TAG)] Loaded \(caCerts.count) CA certificate(s)")
+                self.expectedBrokerCN = expectedCN
+                os_log("  ✓ CA certificates loaded and stored", log: logger, type: .info)
+                os_log("", log: logger, type: .info)
+                
+                os_log("  4b: Creating SSL settings...", log: logger, type: .info)
+                os_log("    - Private key alias: %{public}@", log: logger, type: .info, keyAlias)
+                os_log("    - Hardware key: %{public}@", log: logger, type: .info, String(useHardwareKey))
                 
                 let sslSettings = try self.createSSLSettings(
                     privateKeyAlias: keyAlias,
                     clientCertPem: clientCert,
                     rootCaPem: rootCa,
-                    sniHostname: sniHostname
+                    sniHostname: sniHostname,
+                    useHardwareKey: useHardwareKey
                 )
+                
+                os_log("  ✓ SSL settings created", log: logger, type: .info)
+                os_log("    - Settings keys: %{public}@", log: logger, type: .info, sslSettings.keys.joined(separator: ", "))
+                os_log("", log: logger, type: .info)
                 
                 client.enableSSL = true
                 client.allowUntrustCACertificate = true
                 client.sslSettings = sslSettings
                 client.delegate = self
                 
-                NSLog("[\(TAG)] SSL configured (SNI: \(sniHostname ?? "none"))")
+                os_log("  ✓ SSL enabled on client", log: logger, type: .info)
+                os_log("    - enableSSL: true", log: logger, type: .info)
+                os_log("    - allowUntrustCACertificate: true", log: logger, type: .info)
+                os_log("    - delegate set", log: logger, type: .info)
+                os_log("    - SNI hostname: %{public}@", log: logger, type: .info, sniHostname ?? "none")
+                os_log("", log: logger, type: .info)
             }
             
+            os_log("STEP 5: Storing callbacks and state...", log: logger, type: .info)
             self.connectSuccessCallback = successCallback
             self.connectErrorCallback = errorCallback
             self.brokerUrl = broker
             self.clientIdentifier = clientId
             self.mqttClient = client
+            os_log("✓ State stored", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            
+            os_log("STEP 6: Initiating connection...", log: logger, type: .info)
+            os_log("  - Calling client.connect()...", log: logger, type: .info)
             
             let result = client.connect()
-            if !result {
-                NSLog("[\(TAG)] MQTT connect() returned false - connection may have failed to start")
+            
+            os_log("  - client.connect() returned: %{public}@", log: logger, type: .info, String(result))
+            
+            if result {
+                os_log("✓ Connection initiated successfully", log: logger, type: .info)
+                os_log("  - Waiting for delegate callbacks...", log: logger, type: .info)
+            } else {
+                os_log("✗ Connection initiation FAILED", log: logger, type: .error)
+                errorCallback(["Failed to start connection - client.connect() returned false"])
             }
             
+            os_log("═══════════════════════════════════════════════════════", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            
         } catch {
-            NSLog("[\(TAG)] MQTT connection error: \(error.localizedDescription)")
+            os_log("", log: logger, type: .error)
+            os_log("═══════════════════════════════════════════════════════", log: logger, type: .error)
+            os_log("FATAL ERROR DURING CONNECTION SETUP", log: logger, type: .error)
+            os_log("═══════════════════════════════════════════════════════", log: logger, type: .error)
+            os_log("Error: %{public}@", log: logger, type: .error, error.localizedDescription)
+            os_log("Error domain: %{public}@", log: logger, type: .error, (error as NSError).domain)
+            os_log("Error code: %d", log: logger, type: .error, (error as NSError).code)
+            os_log("", log: logger, type: .error)
             errorCallback([error.localizedDescription])
         }
     }
@@ -124,19 +236,30 @@ class MqttModule: RCTEventEmitter {
     @objc
     func disconnect(_ successCallback: @escaping RCTResponseSenderBlock,
                    errorCallback: @escaping RCTResponseSenderBlock) {
+        os_log("", log: logger, type: .info)
+        os_log("───────────────────────────────────────────────────────", log: logger, type: .info)
+        os_log("DISCONNECT REQUESTED", log: logger, type: .info)
+        os_log("───────────────────────────────────────────────────────", log: logger, type: .info)
+        
         guard let client = mqttClient else {
+            os_log("No active MQTT client to disconnect", log: logger, type: .info)
             successCallback(["No active connection"])
             return
         }
         
-        NSLog("[\(TAG)] MQTT disconnecting")
-        
+        os_log("Current connection state: %{public}@", log: logger, type: .info, String(describing: client.connState))
+        os_log("Disabling auto-reconnect...", log: logger, type: .info)
         client.autoReconnect = false
-        client.disconnect()
-        mqttClient = nil
         
+        os_log("Calling disconnect()...", log: logger, type: .info)
+        client.disconnect()
+        
+        mqttClient = nil
         connectSuccessCallback = nil
         connectErrorCallback = nil
+        
+        os_log("✓ Disconnected and cleaned up", log: logger, type: .info)
+        os_log("", log: logger, type: .info)
         
         successCallback(["Disconnected successfully"])
     }
@@ -145,14 +268,17 @@ class MqttModule: RCTEventEmitter {
     func subscribe(_ topic: String, qos: NSInteger,
                   successCallback: @escaping RCTResponseSenderBlock,
                   errorCallback: @escaping RCTResponseSenderBlock) {
+        os_log("SUBSCRIBE: topic=%{public}@, qos=%d", log: logger, type: .info, topic, qos)
+        
         guard let client = mqttClient, client.connState == .connected else {
+            os_log("✗ Subscribe failed: Client not connected", log: logger, type: .error)
             errorCallback(["Client not connected"])
             return
         }
         
-        NSLog("[\(TAG)] Subscribing to: \(topic)")
         let mqttQos = CocoaMQTTQoS(rawValue: UInt8(qos)) ?? .qos1
         client.subscribe(topic, qos: mqttQos)
+        os_log("✓ Subscribe request sent", log: logger, type: .info)
         successCallback(["Subscribed to \(topic)"])
     }
     
@@ -160,13 +286,16 @@ class MqttModule: RCTEventEmitter {
     func unsubscribe(_ topic: String,
                     successCallback: @escaping RCTResponseSenderBlock,
                     errorCallback: @escaping RCTResponseSenderBlock) {
+        os_log("UNSUBSCRIBE: topic=%{public}@", log: logger, type: .info, topic)
+        
         guard let client = mqttClient, client.connState == .connected else {
+            os_log("✗ Unsubscribe failed: Client not connected", log: logger, type: .error)
             errorCallback(["Client not connected"])
             return
         }
         
-        NSLog("[\(TAG)] Unsubscribing from: \(topic)")
         client.unsubscribe(topic)
+        os_log("✓ Unsubscribe request sent", log: logger, type: .info)
         successCallback(["Unsubscribed from \(topic)"])
     }
     
@@ -174,7 +303,10 @@ class MqttModule: RCTEventEmitter {
     func publish(_ topic: String, message: String, qos: NSInteger, retained: Bool,
                 successCallback: @escaping RCTResponseSenderBlock,
                 errorCallback: @escaping RCTResponseSenderBlock) {
+        os_log("PUBLISH: topic=%{public}@, qos=%d, retained=%{public}@", log: logger, type: .info, topic, qos, String(retained))
+        
         guard let client = mqttClient, client.connState == .connected else {
+            os_log("✗ Publish failed: Client not connected", log: logger, type: .error)
             errorCallback(["Client not connected"])
             return
         }
@@ -185,14 +317,15 @@ class MqttModule: RCTEventEmitter {
             let payload = [UInt8](binaryData)
             let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
             client.publish(mqttMessage)
-            NSLog("[\(TAG)] Published binary data (\(payload.count) bytes) to \(topic)")
+            os_log("✓ Published binary data (%d bytes)", log: logger, type: .info, payload.count)
         } else {
             if let stringData = message.data(using: .utf8) {
                 let payload = [UInt8](stringData)
                 let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
                 client.publish(mqttMessage)
-                NSLog("[\(TAG)] Published string data to \(topic)")
+                os_log("✓ Published string data (%d bytes)", log: logger, type: .info, payload.count)
             } else {
+                os_log("✗ Failed to encode message", log: logger, type: .error)
                 errorCallback(["Failed to encode message as UTF-8"])
                 return
             }
@@ -204,6 +337,7 @@ class MqttModule: RCTEventEmitter {
     @objc
     func isConnected(_ callback: @escaping RCTResponseSenderBlock) {
         let connected = mqttClient?.connState == .connected
+        os_log("isConnected check: %{public}@", log: logger, type: .info, String(connected))
         callback([connected])
     }
     
@@ -215,44 +349,74 @@ class MqttModule: RCTEventEmitter {
         privateKeyAlias: String,
         clientCertPem: String,
         rootCaPem: String,
-        sniHostname: String?
+        sniHostname: String?,
+        useHardwareKey: Bool
     ) throws -> [String: NSObject] {
+        
+        os_log("      → createSSLSettings() called", log: logger, type: .info)
+        os_log("        - privateKeyAlias: %{public}@", log: logger, type: .info, privateKeyAlias)
+        os_log("        - useHardwareKey: %{public}@", log: logger, type: .info, String(useHardwareKey))
+        os_log("        - sniHostname: %{public}@", log: logger, type: .info, sniHostname ?? "nil")
         
         let identity = try createIdentity(
             privateKeyAlias: privateKeyAlias,
-            clientCertPem: clientCertPem
+            clientCertPem: clientCertPem,
+            useHardwareKey: useHardwareKey
         )
+        
+        os_log("        ✓ Identity created", log: logger, type: .info)
         
         var settings: [String: NSObject] = [:]
         settings[kCFStreamSSLCertificates as String] = [identity] as NSArray
         
         if let sniHost = sniHostname, !sniHost.isEmpty {
             settings[kCFStreamSSLPeerName as String] = sniHost as NSString
+            os_log("        ✓ SNI hostname set: %{public}@", log: logger, type: .info, sniHost)
         }
+        
+        os_log("        ✓ SSL settings dictionary complete", log: logger, type: .info)
         
         return settings
     }
     
-    private func createIdentity(privateKeyAlias: String, clientCertPem: String) throws -> SecIdentity {
+    private func createIdentity(privateKeyAlias: String, clientCertPem: String, useHardwareKey: Bool) throws -> SecIdentity {
+        os_log("        → createIdentity() called", log: logger, type: .info)
+        os_log("          - Loading private key from keychain...", log: logger, type: .info)
+        
         guard let privateKey = try loadPrivateKeyFromKeychain(alias: privateKeyAlias) else {
+            os_log("          ✗ Private key not found", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Private key not found: \(privateKeyAlias)"])
         }
         
+        os_log("          ✓ Private key loaded", log: logger, type: .info)
+        os_log("          - Parsing client certificate PEM...", log: logger, type: .info)
+        
         let certificates = try parseCertificatesFromPEM(clientCertPem)
         guard let certificate = certificates.first else {
+            os_log("          ✗ No certificates found in PEM", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Failed to parse client certificate"])
         }
         
-        let certLabel = "MQTT_CLIENT_CERT_\(privateKeyAlias)"
+        os_log("          ✓ Client certificate parsed", log: logger, type: .info)
         
+        if let summary = SecCertificateCopySubjectSummary(certificate) as String? {
+            os_log("          - Client cert subject: %{public}@", log: logger, type: .info, summary)
+        }
+        
+        let certLabel = "MQTT_CLIENT_CERT_\(privateKeyAlias)"
+        os_log("          - Certificate label: %{public}@", log: logger, type: .info, certLabel)
+        
+        os_log("          - Deleting any existing certificate...", log: logger, type: .info)
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
             kSecAttrLabel as String: certLabel
         ]
-        SecItemDelete(deleteQuery as CFDictionary)
+        let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+        os_log("          - Delete status: %d", log: logger, type: .info, deleteStatus)
         
+        os_log("          - Adding certificate to keychain...", log: logger, type: .info)
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
             kSecValueRef as String: certificate,
@@ -260,10 +424,16 @@ class MqttModule: RCTEventEmitter {
         ]
         
         let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        os_log("          - Add status: %d", log: logger, type: .info, addStatus)
+        
         guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
+            os_log("          ✗ Failed to add certificate", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: Int(addStatus),
                         userInfo: [NSLocalizedDescriptionKey: "Failed to add certificate: \(addStatus)"])
         }
+        
+        os_log("          ✓ Certificate added to keychain", log: logger, type: .info)
+        os_log("          - Creating identity...", log: logger, type: .info)
         
         let identityQuery: [String: Any] = [
             kSecClass as String: kSecClassIdentity,
@@ -273,18 +443,24 @@ class MqttModule: RCTEventEmitter {
         
         var identityRef: CFTypeRef?
         let identityStatus = SecItemCopyMatching(identityQuery as CFDictionary, &identityRef)
+        os_log("          - Identity query status: %d", log: logger, type: .info, identityStatus)
         
         guard identityStatus == errSecSuccess else {
+            os_log("          ✗ Failed to create identity", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Failed to create identity: \(identityStatus)"])
         }
         
-        NSLog("[\(TAG)] Client identity created")
+        os_log("          ✓ Identity created successfully", log: logger, type: .info)
         return (identityRef as! SecIdentity)
     }
     
     private func loadPrivateKeyFromKeychain(alias: String) throws -> SecKey? {
+        os_log("            → loadPrivateKeyFromKeychain()", log: logger, type: .info)
+        os_log("              - Alias: %{public}@", log: logger, type: .info, alias)
+        
         guard let tag = alias.data(using: .utf8) else {
+            os_log("              ✗ Invalid alias (not UTF-8)", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Invalid alias"])
         }
@@ -296,23 +472,31 @@ class MqttModule: RCTEventEmitter {
             kSecReturnRef as String: true
         ]
         
+        os_log("              - Querying keychain...", log: logger, type: .info)
+        
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         
+        os_log("              - Query status: %d", log: logger, type: .info, status)
+        
         guard status == errSecSuccess else {
-            NSLog("[\(TAG)] Private key not found: \(status)")
+            os_log("              ✗ Key not found (status=%d)", log: logger, type: .error, status)
             return nil
         }
         
+        os_log("              ✓ Private key found", log: logger, type: .info)
         return (item as! SecKey)
     }
     
     private func parseCertificatesFromPEM(_ pem: String) throws -> [SecCertificate] {
+        os_log("            → parseCertificatesFromPEM()", log: logger, type: .info)
+        
         var certificates: [SecCertificate] = []
         
         let components = pem.components(separatedBy: "-----BEGIN CERTIFICATE-----")
+        os_log("              - Found %d potential certificate blocks", log: logger, type: .info, components.count - 1)
         
-        for component in components {
+        for (index, component) in components.enumerated() {
             guard component.contains("-----END CERTIFICATE-----") else {
                 continue
             }
@@ -328,11 +512,18 @@ class MqttModule: RCTEventEmitter {
             
             guard let certData = Data(base64Encoded: base64),
                   let cert = SecCertificateCreateWithData(nil, certData as CFData) else {
+                os_log("              ✗ Failed to parse certificate block %d", log: logger, type: .error, index)
                 continue
             }
             
             certificates.append(cert)
+            
+            if let summary = SecCertificateCopySubjectSummary(cert) as String? {
+                os_log("              ✓ Parsed certificate: %{public}@", log: logger, type: .info, summary)
+            }
         }
+        
+        os_log("            ✓ Total certificates parsed: %d", log: logger, type: .info, certificates.count)
         
         return certificates
     }
@@ -342,19 +533,22 @@ class MqttModule: RCTEventEmitter {
     // ============================================================================
     
     private func extractCommonName(from certificate: SecCertificate) -> String? {
+        os_log("              → extractCommonName()", log: logger, type: .info)
+        
         if let cn = extractCNFromSubjectSummary(certificate) {
             return cn
         }
         
+        os_log("              - Trying deprecated API...", log: logger, type: .info)
         var commonName: CFString?
         let status = SecCertificateCopyCommonName(certificate, &commonName)
         
         if status == errSecSuccess, let cn = commonName as String? {
-            NSLog("[\(TAG)] CN extracted via SecCertificateCopyCommonName: \(cn)")
+            os_log("              ✓ CN via deprecated API: %{public}@", log: logger, type: .info, cn)
             return cn
         }
         
-        NSLog("[\(TAG)] Warning: Failed to extract CN from certificate")
+        os_log("              ✗ Failed to extract CN", log: logger, type: .error)
         return nil
     }
     
@@ -363,10 +557,10 @@ class MqttModule: RCTEventEmitter {
             return nil
         }
         
-        NSLog("[\(TAG)] Certificate subject summary: \(summary)")
+        os_log("              - Certificate summary: %{public}@", log: logger, type: .info, summary)
         
         if !summary.contains("=") && !summary.contains(",") {
-            NSLog("[\(TAG)] CN extracted from subject summary: \(summary)")
+            os_log("              ✓ CN (simple): %{public}@", log: logger, type: .info, summary)
             return summary
         }
         
@@ -376,7 +570,7 @@ class MqttModule: RCTEventEmitter {
             
             if trimmed.lowercased().hasPrefix("cn=") {
                 let cn = String(trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces))
-                NSLog("[\(TAG)] CN extracted by parsing DN: \(cn)")
+                os_log("              ✓ CN (parsed): %{public}@", log: logger, type: .info, cn)
                 return cn
             }
         }
@@ -386,7 +580,7 @@ class MqttModule: RCTEventEmitter {
             let trimmed = component.trimmingCharacters(in: .whitespaces)
             if trimmed.lowercased().hasPrefix("cn=") {
                 let cn = String(trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces))
-                NSLog("[\(TAG)] CN extracted by parsing DN (slash separator): \(cn)")
+                os_log("              ✓ CN (slash-parsed): %{public}@", log: logger, type: .info, cn)
                 return cn
             }
         }
@@ -401,67 +595,159 @@ class MqttModule: RCTEventEmitter {
 
 extension MqttModule: CocoaMQTTDelegate {
     
+    func mqtt(_ mqtt: CocoaMQTT, didStateChangeTo state: CocoaMQTTConnState) {
+        let stateString: String
+        switch state {
+        case .connecting:
+            stateString = "connecting"
+        case .connected:
+            stateString = "connected"
+        case .disconnected:
+            stateString = "disconnected"
+        @unknown default:
+            stateString = "unknown(\(state.rawValue))"
+        }
+        
+        var elapsed = ""
+        if let startTime = connectionStartTime {
+            let duration = Date().timeIntervalSince(startTime)
+            elapsed = String(format: " [+%.3fs]", duration)
+        }
+        
+        os_log("", log: logger, type: .info)
+        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
+        os_log("║ DELEGATE: didStateChangeTo                           ║", log: logger, type: .info)
+        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
+        os_log("║ State: %{public}@%{public}@", log: logger, type: .info, stateString, elapsed)
+        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("", log: logger, type: .info)
+    }
+    
     func mqtt(_ mqtt: CocoaMQTT, didReceive trust: SecTrust, completionHandler: @escaping (Bool) -> Void) {
+        var elapsed = ""
+        if let startTime = connectionStartTime {
+            let duration = Date().timeIntervalSince(startTime)
+            elapsed = String(format: " [+%.3fs]", duration)
+        }
+        
+        os_log("", log: logger, type: .info)
+        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
+        os_log("║ DELEGATE: didReceive trust (TLS HANDSHAKE)           ║", log: logger, type: .info)
+        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
+        os_log("║ Time: %{public}@", log: logger, type: .info, elapsed)
+        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("", log: logger, type: .info)
+        
+        os_log("  STEP 1: Checking CA certificates...", log: logger, type: .info)
         guard !trustedCACertificates.isEmpty else {
-            NSLog("[\(TAG)] Server cert validation failed: No CA certificates configured")
+            os_log("  ✗ No CA certificates configured", log: logger, type: .error)
             completionHandler(false)
             return
         }
+        os_log("  ✓ %d CA certificate(s) available", log: logger, type: .info, trustedCACertificates.count)
         
-        if let serverCert = SecTrustGetCertificateAtIndex(trust, 0) {
-            if let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty {
-                if let actualCN = extractCommonName(from: serverCert) {
-                    NSLog("[\(TAG)] Broker certificate CN: \(actualCN)")
-                    
-                    if actualCN != expectedCN {
-                        NSLog("[\(TAG)] CN MISMATCH! Expected: '\(expectedCN)', Got: '\(actualCN)'")
-                        completionHandler(false)
-                        return
-                    }
-                    
-                    NSLog("[\(TAG)] Broker CN validated: \(actualCN)")
-                } else {
-                    NSLog("[\(TAG)] Failed to extract CN from broker certificate")
-                    completionHandler(false)
-                    return
-                }
-            } else {
-                NSLog("[\(TAG)] No expected CN configured - skipping CN validation")
-            }
+        os_log("  STEP 2: Checking expected CN...", log: logger, type: .info)
+        guard let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty else {
+            os_log("  ✗ No expected CN configured", log: logger, type: .error)
+            completionHandler(false)
+            return
+        }
+        os_log("  ✓ Expected CN: %{public}@", log: logger, type: .info, expectedCN)
+        
+        os_log("  STEP 3: Retrieving server certificate...", log: logger, type: .info)
+        guard let serverCert = SecTrustGetCertificateAtIndex(trust, 0) else {
+            os_log("  ✗ Cannot retrieve server certificate", log: logger, type: .error)
+            completionHandler(false)
+            return
+        }
+        os_log("  ✓ Server certificate retrieved", log: logger, type: .info)
+        
+        if let summary = SecCertificateCopySubjectSummary(serverCert) as String? {
+            os_log("    - Server cert subject: %{public}@", log: logger, type: .info, summary)
         }
         
+        os_log("  STEP 4: Extracting CN from server certificate...", log: logger, type: .info)
+        guard let actualCN = extractCommonName(from: serverCert) else {
+            os_log("  ✗ Cannot extract CN from server certificate", log: logger, type: .error)
+            completionHandler(false)
+            return
+        }
+        os_log("  ✓ Actual CN: %{public}@", log: logger, type: .info, actualCN)
+        
+        os_log("  STEP 5: Comparing CNs...", log: logger, type: .info)
+        os_log("    - Expected: '%{public}@'", log: logger, type: .info, expectedCN)
+        os_log("    - Actual:   '%{public}@'", log: logger, type: .info, actualCN)
+        
+        if actualCN != expectedCN {
+            os_log("  ✗ CN MISMATCH!", log: logger, type: .error)
+            completionHandler(false)
+            return
+        }
+        os_log("  ✓ CN matches!", log: logger, type: .info)
+        
+        os_log("  STEP 6: Setting anchor certificates...", log: logger, type: .info)
         let status = SecTrustSetAnchorCertificates(trust, trustedCACertificates as CFArray)
         guard status == errSecSuccess else {
-            NSLog("[\(TAG)] Server cert validation failed: Could not set anchor certificates (status: \(status))")
+            os_log("  ✗ Failed to set anchor certificates (status=%d)", log: logger, type: .error, status)
             completionHandler(false)
             return
         }
+        os_log("  ✓ Anchor certificates set", log: logger, type: .info)
         
         SecTrustSetAnchorCertificatesOnly(trust, true)
+        os_log("  ✓ Using only provided anchors", log: logger, type: .info)
         
+        os_log("  STEP 7: Evaluating trust...", log: logger, type: .info)
         var error: CFError?
         let isValid = SecTrustEvaluateWithError(trust, &error)
         
         if isValid {
-            NSLog("[\(TAG)] Server certificate validated against trusted CAs")
+            os_log("  ✓ Server certificate is VALID", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
+            os_log("║ TLS VALIDATION: SUCCESS ✓                            ║", log: logger, type: .info)
+            os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
             completionHandler(true)
         } else {
             let errorDesc = error?.localizedDescription ?? "Unknown error"
-            NSLog("[\(TAG)] Server cert validation failed: \(errorDesc)")
+            os_log("  ✗ Trust evaluation failed: %{public}@", log: logger, type: .error, errorDesc)
+            os_log("", log: logger, type: .error)
+            os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .error)
+            os_log("║ TLS VALIDATION: FAILED ✗                             ║", log: logger, type: .error)
+            os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .error)
+            os_log("", log: logger, type: .error)
             completionHandler(false)
         }
     }
     
     func mqtt(_ mqtt: CocoaMQTT, didConnectAck ack: CocoaMQTTConnAck) {
+        var elapsed = ""
+        if let startTime = connectionStartTime {
+            let duration = Date().timeIntervalSince(startTime)
+            elapsed = String(format: " [+%.3fs]", duration)
+        }
+        
+        os_log("", log: logger, type: .info)
+        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
+        os_log("║ DELEGATE: didConnectAck                               ║", log: logger, type: .info)
+        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
+        os_log("║ ACK: %{public}@%{public}@", log: logger, type: .info, String(describing: ack), elapsed)
+        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("", log: logger, type: .info)
+        
         if ack == .accept {
-            NSLog("[\(TAG)] MQTT connected to \(brokerUrl)")
+            os_log("✓✓✓ MQTT CONNECTION SUCCESSFUL ✓✓✓", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
             self.sendEvent(withName: "MqttConnected", body: "Connected")
             connectSuccessCallback?(["Connected to \(brokerUrl)"])
             connectSuccessCallback = nil
             connectErrorCallback = nil
         } else {
             let error = "Connection rejected: \(ack)"
-            NSLog("[\(TAG)] MQTT connection rejected: \(ack)")
+            os_log("✗✗✗ MQTT CONNECTION REJECTED ✗✗✗", log: logger, type: .error)
+            os_log("Reason: %{public}@", log: logger, type: .error, error)
+            os_log("", log: logger, type: .error)
             connectErrorCallback?([error])
             connectSuccessCallback = nil
             connectErrorCallback = nil
@@ -469,15 +755,20 @@ extension MqttModule: CocoaMQTTDelegate {
     }
     
     func mqtt(_ mqtt: CocoaMQTT, didPublishMessage message: CocoaMQTTMessage, id: UInt16) {
+        os_log("DELEGATE: didPublishMessage (id=%d, topic=%{public}@)", log: logger, type: .info, id, message.topic)
         self.sendEvent(withName: "MqttDeliveryComplete", body: [
             "topic": message.topic,
             "messageId": id
         ])
     }
     
-    func mqtt(_ mqtt: CocoaMQTT, didPublishAck id: UInt16) {}
+    func mqtt(_ mqtt: CocoaMQTT, didPublishAck id: UInt16) {
+        os_log("DELEGATE: didPublishAck (id=%d)", log: logger, type: .info, id)
+    }
     
     func mqtt(_ mqtt: CocoaMQTT, didReceiveMessage message: CocoaMQTTMessage, id: UInt16) {
+        os_log("DELEGATE: didReceiveMessage (id=%d, topic=%{public}@, size=%d bytes)", log: logger, type: .info, id, message.topic, message.payload.count)
+        
         let payloadData = Data(message.payload)
         let payloadBase64 = payloadData.base64EncodedString()
         
@@ -489,14 +780,54 @@ extension MqttModule: CocoaMQTTDelegate {
         ])
     }
     
-    func mqtt(_ mqtt: CocoaMQTT, didSubscribeTopics success: NSDictionary, failed: [String]) {}
-    func mqtt(_ mqtt: CocoaMQTT, didUnsubscribeTopics topics: [String]) {}
-    func mqttDidPing(_ mqtt: CocoaMQTT) {}
-    func mqttDidReceivePong(_ mqtt: CocoaMQTT) {}
+    func mqtt(_ mqtt: CocoaMQTT, didSubscribeTopics success: NSDictionary, failed: [String]) {
+        os_log("DELEGATE: didSubscribeTopics", log: logger, type: .info)
+        os_log("  - Success: %{public}@", log: logger, type: .info, String(describing: success))
+        os_log("  - Failed: %{public}@", log: logger, type: .info, String(describing: failed))
+    }
+    
+    func mqtt(_ mqtt: CocoaMQTT, didUnsubscribeTopics topics: [String]) {
+        os_log("DELEGATE: didUnsubscribeTopics: %{public}@", log: logger, type: .info, topics.joined(separator: ", "))
+    }
+    
+    func mqttDidPing(_ mqtt: CocoaMQTT) {
+        os_log("DELEGATE: mqttDidPing", log: logger, type: .debug)
+    }
+    
+    func mqttDidReceivePong(_ mqtt: CocoaMQTT) {
+        os_log("DELEGATE: mqttDidReceivePong", log: logger, type: .debug)
+    }
     
     func mqttDidDisconnect(_ mqtt: CocoaMQTT, withError err: Error?) {
-        let errorMsg = err?.localizedDescription ?? "Disconnected"
-        NSLog("[\(TAG)] MQTT disconnected: \(errorMsg)")
+        var elapsed = ""
+        if let startTime = connectionStartTime {
+            let duration = Date().timeIntervalSince(startTime)
+            elapsed = String(format: " [+%.3fs]", duration)
+        }
+        
+        let errorMsg = err?.localizedDescription ?? "Clean disconnect"
+        
+        os_log("", log: logger, type: .info)
+        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
+        os_log("║ DELEGATE: mqttDidDisconnect                           ║", log: logger, type: .info)
+        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
+        os_log("║ Reason: %{public}@%{public}@", log: logger, type: .info, errorMsg, elapsed)
+        
+        if let error = err {
+            os_log("║ Domain: %{public}@", log: logger, type: .info, (error as NSError).domain)
+            os_log("║ Code: %d", log: logger, type: .info, (error as NSError).code)
+        }
+        
+        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("", log: logger, type: .info)
+        
         self.sendEvent(withName: "MqttDisconnected", body: errorMsg)
+        
+        if let errorCallback = connectErrorCallback {
+            os_log("Connection never established, calling error callback", log: logger, type: .error)
+            errorCallback(["Connection failed: \(errorMsg)"])
+            connectErrorCallback = nil
+            connectSuccessCallback = nil
+        }
     }
 }
