@@ -72,18 +72,6 @@ class MqttModule: RCTEventEmitter {
             os_log("  - rootCa present: %{public}@", log: logger, type: .info, String(rootCaPem != nil))
             os_log("  - useHardwareKey: %{public}@", log: logger, type: .info, String(useHardwareKey))
             
-            if let certPem = clientCertPem {
-                let certLength = certPem.count
-                let certLines = certPem.components(separatedBy: "\n").count
-                os_log("  - clientCert length: %d characters, %d lines", log: logger, type: .info, certLength, certLines)
-            }
-            
-            if let caPem = rootCaPem {
-                let caLength = caPem.count
-                let caLines = caPem.components(separatedBy: "\n").count
-                os_log("  - rootCa length: %d characters, %d lines", log: logger, type: .info, caLength, caLines)
-            }
-            
             guard let rootCa = rootCaPem, 
                   let clientCert = clientCertPem, 
                   let keyAlias = privateKeyAlias else {
