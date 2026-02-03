@@ -344,16 +344,28 @@ class MqttModule: RCTEventEmitter {
         os_log("        - useHardwareKey: %{public}@", log: logger, type: .info, String(useHardwareKey))
         os_log("        - sniHostname: %{public}@", log: logger, type: .info, sniHostname ?? "nil")
         
-        let identity = try createIdentity(
+        let (identity, intermediates) = try createIdentity(
             privateKeyAlias: privateKeyAlias,
             clientCertPem: clientCertPem,
             useHardwareKey: useHardwareKey
         )
         
         os_log("        ✓ Identity created", log: logger, type: .info)
+        os_log("        - Intermediate certificates: %d", log: logger, type: .info, intermediates.count)
+        for (index, cert) in intermediates.enumerated() {
+            if let summary = SecCertificateCopySubjectSummary(cert) as String? {
+                os_log("          - Intermediate %d: %{public}@", log: logger, type: .info, index + 1, summary)
+            }
+        }
+        
+        // kCFStreamSSLCertificates expects: [identity, intermediate1, intermediate2, ...]
+        // The identity contains the leaf. Intermediates must follow so the server
+        // can walk the chain up to the root it already trusts.
+        var certChain: [Any] = [identity]
+        certChain.append(contentsOf: intermediates)
         
         var settings: [String: NSObject] = [:]
-        settings[kCFStreamSSLCertificates as String] = [identity] as NSArray
+        settings[kCFStreamSSLCertificates as String] = certChain as NSArray
         
         if let sniHost = sniHostname, !sniHost.isEmpty {
             settings[kCFStreamSSLPeerName as String] = sniHost as NSString
@@ -365,7 +377,7 @@ class MqttModule: RCTEventEmitter {
         return settings
     }
     
-    private func createIdentity(privateKeyAlias: String, clientCertPem: String, useHardwareKey: Bool) throws -> SecIdentity {
+    private func createIdentity(privateKeyAlias: String, clientCertPem: String, useHardwareKey: Bool) throws -> (SecIdentity, [SecCertificate]) {
         os_log("        → createIdentity() called", log: logger, type: .info)
         os_log("          - Loading private key from keychain...", log: logger, type: .info)
         
@@ -384,6 +396,12 @@ class MqttModule: RCTEventEmitter {
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Failed to parse client certificate"])
         }
+        
+        // Everything after the leaf — these are the intermediates that need to
+        // travel with the identity so the server can build the full chain.
+        let intermediates = Array(certificates.dropFirst())
+        os_log("          - Leaf certificate: 1", log: logger, type: .info)
+        os_log("          - Intermediate certificates: %d", log: logger, type: .info, intermediates.count)
         
         os_log("          ✓ Client certificate parsed", log: logger, type: .info)
         
@@ -438,7 +456,7 @@ class MqttModule: RCTEventEmitter {
         }
         
         os_log("          ✓ Identity created successfully", log: logger, type: .info)
-        return (identityRef as! SecIdentity)
+        return (identityRef as! SecIdentity, intermediates)
     }
     
     private func loadPrivateKeyFromKeychain(alias: String) throws -> SecKey? {
