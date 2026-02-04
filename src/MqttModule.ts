@@ -3,7 +3,7 @@ import type { MqttCertificates } from './types';
 
 /**
  * Native module interface - parameter order must match iOS/Android native implementations
- * Order: broker, clientId, certificates, sniHostname, brokerIp, successCallback, errorCallback
+ * Order: broker, clientId, certificates, sniHostname, brokerIp, brokerCommonName, successCallback, errorCallback
  */
 interface MqttModuleType {
   connect(
@@ -16,21 +16,30 @@ interface MqttModuleType {
     successCallback: (message: string) => void,
     errorCallback: (error: string) => void
   ): void;
+
   disconnect(
     successCallback: (message: string) => void,
     errorCallback: (error: string) => void
   ): void;
+
+  cleanup(
+    successCallback: (message: string) => void,
+    errorCallback: (error: string) => void
+  ): void;
+
   subscribe(
     topic: string,
     qos: number,
     successCallback: (message: string) => void,
     errorCallback: (error: string) => void
   ): void;
+
   unsubscribe(
     topic: string,
     successCallback: (message: string) => void,
     errorCallback: (error: string) => void
   ): void;
+
   publish(
     topic: string,
     message: string | Uint8Array,
@@ -39,6 +48,7 @@ interface MqttModuleType {
     successCallback: (message: string) => void,
     errorCallback: (error: string) => void
   ): void;
+
   isConnected(callback: (isConnected: boolean) => void): void;
 }
 
