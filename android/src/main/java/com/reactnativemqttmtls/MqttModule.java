@@ -30,10 +30,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
         super(reactContext);
         this.reactContext = reactContext;
         setupBouncyCastle();
-        
-        // Clean up any stale connections from previous app instances
-        Log.d(TAG, "MqttModule initialized - performing initial cleanup");
-        cleanupConnection();
     }
 
     private void setupBouncyCastle() {
@@ -46,65 +42,10 @@ public class MqttModule extends ReactContextBaseJavaModule {
         }
     }
 
-    /**
-     * Centralized cleanup method to properly close and null out the MQTT client
-     */
-    private void cleanupConnection() {
-        Log.d(TAG, "Cleaning up MQTT connection state...");
-        
-        if (client != null) {
-            try {
-                // Disable auto-reconnect to prevent reconnection attempts
-                if (client.isConnected()) {
-                    Log.d(TAG, "  - Client is connected, disconnecting...");
-                    try {
-                        client.disconnect(0); // Immediate disconnect with 0ms timeout
-                    } catch (Exception e) {
-                        Log.w(TAG, "  - Disconnect error (non-critical): " + e.getMessage());
-                    }
-                }
-                
-                // Close the client to release resources
-                Log.d(TAG, "  - Closing client...");
-                client.close();
-            } catch (Exception e) {
-                Log.w(TAG, "  - Error during cleanup (non-critical): " + e.getMessage());
-            } finally {
-                client = null;
-                Log.d(TAG, "✓ Cleanup complete");
-            }
-        } else {
-            Log.d(TAG, "  - No active client to clean up");
-        }
-    }
-
     @NonNull
     @Override
     public String getName() {
         return "MqttModule";
-    }
-
-    // ============================================================================
-    // CLEANUP METHOD (exposed to React Native)
-    // ============================================================================
-    
-    @ReactMethod
-    public void cleanup(Callback successCallback, Callback errorCallback) {
-        Log.d(TAG, "═══════════════════════════════════════");
-        Log.d(TAG, "EXPLICIT CLEANUP REQUESTED");
-        Log.d(TAG, "═══════════════════════════════════════");
-        
-        try {
-            cleanupConnection();
-            if (successCallback != null) {
-                successCallback.invoke("Cleanup successful");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Cleanup error", e);
-            if (errorCallback != null) {
-                errorCallback.invoke("Cleanup error: " + e.getMessage());
-            }
-        }
     }
 
     // ============================================================================
@@ -311,12 +252,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
             final Callback success,
             final Callback error) {
         try {
-            // Clean up any existing connection before creating a new one
-            if (client != null) {
-                Log.w(TAG, "Found existing client, cleaning up before new connection...");
-                cleanupConnection();
-            }
-            
             String privateKeyAlias = certificates.hasKey("privateKeyAlias")
                     ? certificates.getString("privateKeyAlias")
                     : null;
@@ -330,11 +265,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 throw new IllegalArgumentException("privateKeyAlias required");
             }
 
-            Log.i(TAG, "═══════════════════════════════════════");
-            Log.i(TAG, "MQTT CONNECTION ATTEMPT STARTED");
-            Log.i(TAG, "═══════════════════════════════════════");
-            Log.i(TAG, "Broker: " + brokerUrl);
-            Log.i(TAG, "Client ID: " + clientId);
+            Log.i(TAG, "MQTT connection to " + brokerUrl + " (client: " + clientId + ")");
             Log.i(TAG, "Expected broker CN: " + brokerCommonName);
             Log.i(TAG, "Key: " + privateKeyAlias + " (" + (useHardwareKey ? "hardware" : "software") + ")");
 
@@ -402,7 +333,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             client.connect(options, null, new IMqttActionListener() {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
-                    Log.i(TAG, "MQTT CONNECTION SUCCESSFUL");
+                    Log.i(TAG, "MQTT connection successful");
                     if (success != null) {
                         try {
                             success.invoke("Connected");
@@ -421,9 +352,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
                         if (errorMessage == null || errorMessage.isEmpty()) {
                             errorMessage = exception.getClass().getSimpleName();
                         }
-                        Log.e(TAG, "MQTT CONNECTION FAILED", exception);
+                        Log.e(TAG, "MQTT connection failed", exception);
                     } else {
-                        Log.e(TAG, "MQTT CONNECTION FAILED: Unknown error");
+                        Log.e(TAG, "MQTT connection failed: Unknown error");
                     }
                     
                     if (error != null) {
@@ -692,13 +623,8 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void disconnect(Callback successCallback, Callback errorCallback) {
-        Log.d(TAG, "───────────────────────────────────────");
-        Log.d(TAG, "DISCONNECT REQUESTED");
-        Log.d(TAG, "───────────────────────────────────────");
-        
         try {
             if (client == null) {
-                Log.d(TAG, "No active MQTT client to disconnect");
                 if (successCallback != null) {
                     successCallback.invoke("No active connection");
                 }
@@ -706,14 +632,13 @@ public class MqttModule extends ReactContextBaseJavaModule {
             }
 
             if (client.isConnected()) {
-                Log.d(TAG, "Client is connected, disconnecting...");
                 client.disconnect(null, new IMqttActionListener() {
                     @Override
                     public void onSuccess(IMqttToken asyncActionToken) {
                         try {
                             client.close();
                             client = null;
-                            Log.i(TAG, "✓ MQTT disconnected and cleaned up");
+                            Log.i(TAG, "MQTT disconnected");
                             if (successCallback != null) {
                                 successCallback.invoke("Disconnected successfully");
                             }
@@ -746,7 +671,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     }
                 });
             } else {
-                Log.d(TAG, "Client not connected, cleaning up...");
                 try {
                     client.close();
                 } catch (Exception e) {
