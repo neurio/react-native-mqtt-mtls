@@ -11,7 +11,6 @@ export const MqttProvider = ({ children }) => {
 
   useEffect(() => {
     // Cleanup any stale MQTT connections from previous app sessions
-    // Only call cleanup if it exists (backwards compatibility)
     if (typeof MqttModule.cleanup === 'function') {
       console.log('MqttProvider: Performing initial cleanup...');
       MqttModule.cleanup(
@@ -23,7 +22,15 @@ export const MqttProvider = ({ children }) => {
         }
       );
     } else {
-      console.log('MqttProvider: cleanup method not available (older version)');
+      console.log('MqttProvider: cleanup method not available, using disconnect fallback...');
+      MqttModule.disconnect(
+        (success) => {
+          console.log('MqttProvider: Disconnect fallback successful:', success);
+        },
+        (error) => {
+          console.log('MqttProvider: Disconnect fallback error (non-critical):', error);
+        }
+      );
     }
 
     // Create event emitter for MQTT events
@@ -77,9 +84,12 @@ export const MqttProvider = ({ children }) => {
       console.log('MqttProvider: Unmounting, cleaning up subscriptions...');
       subscriptions.forEach(sub => sub.remove());
       
-      // Only call cleanup if it exists
+      // Use cleanup if available, otherwise fall back to disconnect
       if (typeof MqttModule.cleanup === 'function') {
         MqttModule.cleanup(() => {}, () => {});
+      } else {
+        console.log('MqttProvider: Using disconnect as cleanup fallback');
+        MqttModule.disconnect(() => {}, () => {});
       }
     };
   }, []);
