@@ -15,9 +15,6 @@ RCT_EXTERN_METHOD(connect:(NSString *)broker
 RCT_EXTERN_METHOD(disconnect:(RCTResponseSenderBlock)successCallback
                   errorCallback:(RCTResponseSenderBlock)errorCallback)
 
-RCT_EXTERN_METHOD(cleanup:(RCTResponseSenderBlock)successCallback
-                  errorCallback:(RCTResponseSenderBlock)errorCallback)
-
 RCT_EXTERN_METHOD(subscribe:(NSString *)topic
                   qos:(NSInteger)qos
                   successCallback:(RCTResponseSenderBlock)successCallback

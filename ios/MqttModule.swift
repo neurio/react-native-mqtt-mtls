@@ -18,20 +18,11 @@ class MqttModule: RCTEventEmitter {
     
     override init() {
         super.init()
-        
-        // Clean up any lingering state from previous app instances
-        cleanupConnection()
-        
         os_log("=====================================", log: logger, type: .info)
         os_log("MqttModule initialized", log: logger, type: .info)
         os_log("iOS Version: %{public}@", log: logger, type: .info, UIDevice.current.systemVersion)
         os_log("Device Model: %{public}@", log: logger, type: .info, UIDevice.current.model)
         os_log("=====================================", log: logger, type: .info)
-    }
-    
-    deinit {
-        os_log("MqttModule deinitializing - cleaning up", log: logger, type: .info)
-        cleanupConnection()
     }
     
     override func supportedEvents() -> [String]! {
@@ -40,40 +31,6 @@ class MqttModule: RCTEventEmitter {
     
     override static func requiresMainQueueSetup() -> Bool {
         return false
-    }
-    
-    // Centralized cleanup method
-    private func cleanupConnection() {
-        os_log("Cleaning up connection state...", log: logger, type: .info)
-        
-        if let client = mqttClient {
-            client.autoReconnect = false
-            client.disconnect()
-            os_log("  - Disconnected existing client", log: logger, type: .info)
-        }
-        
-        mqttClient = nil
-        connectSuccessCallback = nil
-        connectErrorCallback = nil
-        expectedBrokerCN = nil
-        brokerUrl = ""
-        clientIdentifier = ""
-        connectionStartTime = nil
-        
-        os_log("✓ Cleanup complete", log: logger, type: .info)
-    }
-    
-    @objc
-    func cleanup(_ callback: @escaping RCTResponseSenderBlock) {
-        os_log("", log: logger, type: .info)
-        os_log("───────────────────────────────────────────────────────", log: logger, type: .info)
-        os_log("EXPLICIT CLEANUP REQUESTED", log: logger, type: .info)
-        os_log("───────────────────────────────────────────────────────", log: logger, type: .info)
-        
-        cleanupConnection()
-        
-        os_log("", log: logger, type: .info)
-        callback(["Cleanup successful"])
     }
     
     @objc
@@ -87,12 +44,6 @@ class MqttModule: RCTEventEmitter {
         successCallback: @escaping RCTResponseSenderBlock,
         errorCallback: @escaping RCTResponseSenderBlock
     ) {
-        // Ensure clean slate before new connection
-        if mqttClient != nil {
-            os_log("Found existing client, cleaning up before new connection...", log: logger, type: .info)
-            cleanupConnection()
-        }
-        
         connectionStartTime = Date()
         
         os_log("", log: logger, type: .info)
@@ -289,7 +240,9 @@ class MqttModule: RCTEventEmitter {
         os_log("Calling disconnect()...", log: logger, type: .info)
         client.disconnect()
         
-        cleanupConnection()
+        mqttClient = nil
+        connectSuccessCallback = nil
+        connectErrorCallback = nil
         
         os_log("✓ Disconnected and cleaned up", log: logger, type: .info)
         os_log("", log: logger, type: .info)

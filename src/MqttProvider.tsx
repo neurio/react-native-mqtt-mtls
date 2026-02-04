@@ -10,17 +10,6 @@ export const MqttProvider = ({ children }) => {
   const eventEmitterRef = useRef(null);
 
   useEffect(() => {
-    // Cleanup any stale MQTT connections from previous app sessions
-    console.log('MqttProvider: Performing initial cleanup...');
-    MqttModule.cleanup(
-      (success) => {
-        console.log('MqttProvider: Initial cleanup successful:', success);
-      },
-      (error) => {
-        console.log('MqttProvider: Cleanup error (non-critical):', error);
-      }
-    );
-
     // Create event emitter for MQTT events
     eventEmitterRef.current = new NativeEventEmitter(MqttModule);
 
@@ -69,9 +58,7 @@ export const MqttProvider = ({ children }) => {
 
     // Cleanup on unmount
     return () => {
-      console.log('MqttProvider: Unmounting, cleaning up subscriptions...');
       subscriptions.forEach(sub => sub.remove());
-      MqttModule.cleanup(() => { }, () => { });
     };
   }, []);
 
