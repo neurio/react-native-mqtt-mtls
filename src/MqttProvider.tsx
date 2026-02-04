@@ -11,15 +11,20 @@ export const MqttProvider = ({ children }) => {
 
   useEffect(() => {
     // Cleanup any stale MQTT connections from previous app sessions
-    console.log('MqttProvider: Performing initial cleanup...');
-    MqttModule.cleanup(
-      (success) => {
-        console.log('MqttProvider: Initial cleanup successful:', success);
-      },
-      (error) => {
-        console.log('MqttProvider: Cleanup error (non-critical):', error);
-      }
-    );
+    // Only call cleanup if it exists (backwards compatibility)
+    if (typeof MqttModule.cleanup === 'function') {
+      console.log('MqttProvider: Performing initial cleanup...');
+      MqttModule.cleanup(
+        (success) => {
+          console.log('MqttProvider: Initial cleanup successful:', success);
+        },
+        (error) => {
+          console.log('MqttProvider: Cleanup error (non-critical):', error);
+        }
+      );
+    } else {
+      console.log('MqttProvider: cleanup method not available (older version)');
+    }
 
     // Create event emitter for MQTT events
     eventEmitterRef.current = new NativeEventEmitter(MqttModule);
@@ -71,7 +76,11 @@ export const MqttProvider = ({ children }) => {
     return () => {
       console.log('MqttProvider: Unmounting, cleaning up subscriptions...');
       subscriptions.forEach(sub => sub.remove());
-      MqttModule.cleanup(() => { }, () => { });
+      
+      // Only call cleanup if it exists
+      if (typeof MqttModule.cleanup === 'function') {
+        MqttModule.cleanup(() => {}, () => {});
+      }
     };
   }, []);
 
