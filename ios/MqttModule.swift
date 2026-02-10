@@ -168,11 +168,11 @@ class MqttModule: RCTEventEmitter {
             client.username = ""
             client.password = ""
             client.keepAlive = 60
-            client.cleanSession = false
+            client.cleanSession = true
             client.autoReconnect = true
             
             os_log("  - keepAlive: 60 seconds", log: logger, type: .info)
-            os_log("  - cleanSession: false", log: logger, type: .info)
+            os_log("  - cleanSession: true", log: logger, type: .info)
             os_log("  - autoReconnect: true", log: logger, type: .info)
             os_log("✓ Client configured", log: logger, type: .info)
             os_log("", log: logger, type: .info)
