@@ -176,23 +176,50 @@ export const MqttProvider = ({ children }) => {
   }, []);
 
   const publish = useCallback(async (topic, message, qos = 1, retained = false) => {
-    return new Promise((resolve, reject) => {
-      MqttModule.publish(
-        topic,
-        message,
-        qos,
-        retained,
-        (success) => {
-          console.log('Publish success:', success);
-          resolve(success);
-        },
-        (error) => {
-          console.error('Publish error:', error);
-          reject(error);
-        }
-      );
-    });
-  }, []);
+  return new Promise((resolve, reject) => {
+    let publishMessage = message;
+    
+    // Handle binary data by converting to Base64 for the React Native bridge
+    if (message instanceof Uint8Array || message instanceof ArrayBuffer || Buffer.isBuffer(message)) {
+      let bytes;
+      
+      if (message instanceof ArrayBuffer) {
+        bytes = new Uint8Array(message);
+      } else if (Buffer.isBuffer(message)) {
+        bytes = new Uint8Array(message);
+      } else {
+        bytes = message; // Already Uint8Array
+      }
+      
+      // Convert to Base64
+      let binary = '';
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      publishMessage = btoa(binary);
+      
+      console.log('Publish: Converted binary protobuf to Base64');
+    } else if (typeof message !== 'string') {
+      publishMessage = JSON.stringify(message);
+    }
+    
+    MqttModule.publish(
+      topic,
+      publishMessage,
+      qos,
+      retained,
+      (success) => {
+        console.log('Publish success:', success);
+        resolve(success);
+      },
+      (error) => {
+        console.error('Publish error:', error);
+        reject(error);
+      }
+    );
+  });
+}, []);
 
   const value = {
     isConnected,
