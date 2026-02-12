@@ -64,6 +64,30 @@ export const MqttProvider = ({ children }) => {
       eventEmitterRef.current.addListener('MqttMessage', (data) => {
         try {
           const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+
+          // Decode Base64 binary messages automatically
+          if (parsedData.isBinary && parsedData.message) {
+            try {
+              const binaryString = atob(parsedData.message);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+
+              // Replace the base64 string with the decoded ArrayBuffer
+              parsedData.payload = bytes.buffer;
+              console.log('📨 Message received:', parsedData.topic, '(', bytes.length, 'bytes)');
+            } catch (decodeErr) {
+              console.error('Failed to decode Base64 message:', decodeErr);
+              // Keep original message if decode fails
+              parsedData.payload = parsedData.message;
+            }
+          } else {
+            // Plain text message
+            parsedData.payload = parsedData.message;
+            console.log('📨 Message received:', parsedData.topic, '(text)');
+          }
+
           if (configRef.current?.onMessage) {
             configRef.current.onMessage(parsedData);
           }
@@ -83,13 +107,13 @@ export const MqttProvider = ({ children }) => {
     return () => {
       console.log('MqttProvider: Unmounting, cleaning up subscriptions...');
       subscriptions.forEach(sub => sub.remove());
-      
+
       // Use cleanup if available, otherwise fall back to disconnect
       if (typeof MqttModule.cleanup === 'function') {
-        MqttModule.cleanup(() => {}, () => {});
+        MqttModule.cleanup(() => { }, () => { });
       } else {
         console.log('MqttProvider: Using disconnect as cleanup fallback');
-        MqttModule.disconnect(() => {}, () => {});
+        MqttModule.disconnect(() => { }, () => { });
       }
     };
   }, []);
@@ -176,50 +200,56 @@ export const MqttProvider = ({ children }) => {
   }, []);
 
   const publish = useCallback(async (topic, message, qos = 1, retained = false) => {
-  return new Promise((resolve, reject) => {
-    let publishMessage = message;
-    
-    // Handle binary data by converting to Base64 for the React Native bridge
-    if (message instanceof Uint8Array || message instanceof ArrayBuffer || Buffer.isBuffer(message)) {
-      let bytes;
-      
-      if (message instanceof ArrayBuffer) {
-        bytes = new Uint8Array(message);
-      } else if (Buffer.isBuffer(message)) {
-        bytes = new Uint8Array(message);
-      } else {
-        bytes = message; // Already Uint8Array
+    return new Promise((resolve, reject) => {
+      let publishMessage = message;
+
+      // Check if Buffer is available in the environment
+      const isBuffer = typeof Buffer !== 'undefined' && Buffer.isBuffer(message);
+
+      // Handle binary data by converting to Base64 for the React Native bridge
+      if (message instanceof Uint8Array || message instanceof ArrayBuffer || isBuffer) {
+        let bytes;
+
+        if (message instanceof ArrayBuffer) {
+          bytes = new Uint8Array(message);
+        } else if (isBuffer) {
+          bytes = new Uint8Array(message);
+        } else {
+          bytes = message; // Already Uint8Array
+        }
+
+        // Convert to Base64
+        let binary = '';
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        publishMessage = btoa(binary);
+
+        console.log('Publish: Converted binary protobuf to Base64');
+        console.log('  - Topic:', topic);
+        console.log('  - Original byte length:', len);
+        console.log('  - Base64 string length:', publishMessage.length);
+      } else if (typeof message !== 'string') {
+        publishMessage = JSON.stringify(message);
       }
-      
-      // Convert to Base64
-      let binary = '';
-      const len = bytes.byteLength;
-      for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      publishMessage = btoa(binary);
-      
-      console.log('Publish: Converted binary protobuf to Base64');
-    } else if (typeof message !== 'string') {
-      publishMessage = JSON.stringify(message);
-    }
-    
-    MqttModule.publish(
-      topic,
-      publishMessage,
-      qos,
-      retained,
-      (success) => {
-        console.log('Publish success:', success);
-        resolve(success);
-      },
-      (error) => {
-        console.error('Publish error:', error);
-        reject(error);
-      }
-    );
-  });
-}, []);
+
+      MqttModule.publish(
+        topic,
+        publishMessage,
+        qos,
+        retained,
+        (success) => {
+          console.log('Publish success:', success);
+          resolve(success);
+        },
+        (error) => {
+          console.error('Publish error:', error);
+          reject(error);
+        }
+      );
+    });
+  }, []);
 
   const value = {
     isConnected,
