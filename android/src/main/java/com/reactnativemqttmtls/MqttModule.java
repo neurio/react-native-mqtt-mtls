@@ -25,6 +25,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
     private static final String SOFTWARE_KEYSTORE_FILE = "software_keys.p12";
     private final ReactApplicationContext reactContext;
     private MqttAndroidClient client;
+    
+    // ⚡ Track if we're expecting a disconnect (Penguin WiFi change)
+    private volatile boolean expectingDisconnect = false;
 
     public MqttModule(ReactApplicationContext reactContext) {
         super(reactContext);
@@ -54,7 +57,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
         
         if (client != null) {
             try {
-                // Disable auto-reconnect to prevent reconnection attempts
                 if (client.isConnected()) {
                     Log.d(TAG, "  - Client is connected, disconnecting...");
                     try {
@@ -71,6 +73,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 Log.w(TAG, "  - Error during cleanup (non-critical): " + e.getMessage());
             } finally {
                 client = null;
+                expectingDisconnect = false;
                 Log.d(TAG, "✓ Cleanup complete");
             }
         } else {
@@ -105,6 +108,13 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 errorCallback.invoke("Cleanup error: " + e.getMessage());
             }
         }
+    }
+
+    // ⚡ Method to set expecting disconnect flag from React Native
+    @ReactMethod
+    public void setExpectingDisconnect(boolean expecting) {
+        expectingDisconnect = expecting;
+        Log.d(TAG, "⚡ Expecting disconnect flag set to: " + expecting);
     }
 
     // ============================================================================
@@ -317,6 +327,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 cleanupConnection();
             }
             
+            // Reset expecting disconnect flag on new connection
+            expectingDisconnect = false;
+            
             String privateKeyAlias = certificates.hasKey("privateKeyAlias")
                     ? certificates.getString("privateKeyAlias")
                     : null;
@@ -347,7 +360,8 @@ public class MqttModule extends ReactContextBaseJavaModule {
             options.setCleanSession(true);
             options.setConnectionTimeout(30);
             options.setKeepAliveInterval(60);
-            options.setAutomaticReconnect(true);
+            // ⚡ CRITICAL: Disable automatic reconnect - let React Native handle it
+            options.setAutomaticReconnect(false);
 
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
@@ -367,8 +381,15 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
                 @Override
                 public void connectionLost(Throwable cause) {
+                    // ⚡ Check if disconnect is expected
+                    if (expectingDisconnect) {
+                        Log.i(TAG, "✓ Expected disconnect - Penguin changing WiFi networks");
+                        sendEvent("MqttDisconnected", "Connection lost: Expected (Penguin WiFi change)");
+                        return;
+                    }
+                    
                     String errorMsg = cause != null ? cause.getMessage() : "Unknown";
-                    Log.w(TAG, "MQTT connection lost: " + errorMsg);
+                    Log.w(TAG, "MQTT connection lost (unexpected): " + errorMsg);
                     sendEvent("MqttDisconnected", "Connection lost: " + errorMsg);
                 }
 
@@ -414,6 +435,13 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
+                    // ⚡ Check if failure is expected (Penguin WiFi change)
+                    if (expectingDisconnect) {
+                        Log.i(TAG, "✓ Expected connection failure - Penguin changing WiFi networks");
+                        // Don't invoke error callback for expected failures
+                        return;
+                    }
+                    
                     String errorMessage = "Connection failed";
                     
                     if (exception != null) {
@@ -713,6 +741,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                         try {
                             client.close();
                             client = null;
+                            expectingDisconnect = false;
                             Log.i(TAG, "✓ MQTT disconnected and cleaned up");
                             if (successCallback != null) {
                                 successCallback.invoke("Disconnected successfully");
@@ -735,6 +764,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                             if (client != null) {
                                 client.close();
                                 client = null;
+                                expectingDisconnect = false;
                             }
                         } catch (Exception e) {
                             Log.e(TAG, "Error force-closing client", e);
@@ -753,6 +783,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     Log.e(TAG, "Error closing disconnected client", e);
                 }
                 client = null;
+                expectingDisconnect = false;
                 if (successCallback != null) {
                     successCallback.invoke("Disconnected successfully");
                 }
@@ -766,6 +797,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 if (client != null) {
                     client.close();
                     client = null;
+                    expectingDisconnect = false;
                 }
             } catch (Exception cleanupException) {
                 Log.e(TAG, "Cleanup error", cleanupException);
