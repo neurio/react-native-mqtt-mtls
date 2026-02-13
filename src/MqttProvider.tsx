@@ -70,30 +70,39 @@ export const MqttProvider = ({ children }) => {
             try {
               const binaryString = atob(parsedData.message);
               const len = binaryString.length;
-              const bytes = new Uint8Array(len);
               
-              // FIXED: Process in chunks to prevent stack overflow on large messages
-              const chunkSize = 8192; // 8KB chunks
-              for (let offset = 0; offset < len; offset += chunkSize) {
-                const end = Math.min(offset + chunkSize, len);
-                for (let i = offset; i < end; i++) {
+              // Use chunked approach only for large messages (>100KB)
+              let bytes;
+              if (len > 100000) {
+                bytes = new Uint8Array(len);
+                const chunkSize = 8192; // 8KB chunks
+                for (let offset = 0; offset < len; offset += chunkSize) {
+                  const end = Math.min(offset + chunkSize, len);
+                  for (let i = offset; i < end; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                  }
+                }
+                console.log('📨 Message received (chunked):', parsedData.topic, '(', bytes.length, 'bytes)');
+              } else {
+                // Simple approach for smaller messages
+                bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
                   bytes[i] = binaryString.charCodeAt(i);
                 }
+                console.log('📨 Message received:', parsedData.topic, '(', bytes.length, 'bytes)');
               }
 
               // Replace the base64 string with the decoded ArrayBuffer
               parsedData.payload = bytes.buffer;
-              console.log('Message received:', parsedData.topic, '(', bytes.length, 'bytes)');
             } catch (decodeErr) {
               console.error('Failed to decode Base64 message:', decodeErr);
-              console.error('Message length:', parsedData.message?.length);
               // Keep original message if decode fails
               parsedData.payload = parsedData.message;
             }
           } else {
             // Plain text message
             parsedData.payload = parsedData.message;
-            console.log('Message received:', parsedData.topic, '(text)');
+            console.log('📨 Message received:', parsedData.topic, '(text)');
           }
 
           if (configRef.current?.onMessage) {
@@ -101,11 +110,6 @@ export const MqttProvider = ({ children }) => {
           }
         } catch (err) {
           console.error('Failed to parse MQTT message:', err);
-          console.error('Error details:', {
-            topic: data?.topic,
-            messageLength: data?.message?.length,
-            isBinary: data?.isBinary
-          });
         }
       })
     );
@@ -231,17 +235,26 @@ export const MqttProvider = ({ children }) => {
           bytes = message; // Already Uint8Array
         }
 
-        // FIXED: Convert to Base64 in chunks to prevent stack overflow
-        let binary = '';
         const len = bytes.byteLength;
-        const chunkSize = 8192; // 8KB chunks
         
-        for (let offset = 0; offset < len; offset += chunkSize) {
-          const end = Math.min(offset + chunkSize, len);
-          for (let i = offset; i < end; i++) {
+        // Use chunked approach only for large messages (>100KB)
+        let binary = '';
+        if (len > 100000) {
+          console.log('Using chunked encoding for large message:', len, 'bytes');
+          const chunkSize = 8192; // 8KB chunks
+          for (let offset = 0; offset < len; offset += chunkSize) {
+            const end = Math.min(offset + chunkSize, len);
+            for (let i = offset; i < end; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+          }
+        } else {
+          // Simple approach for smaller messages (same as master)
+          for (let i = 0; i < len; i++) {
             binary += String.fromCharCode(bytes[i]);
           }
         }
+        
         publishMessage = btoa(binary);
 
         console.log('Publish: Converted binary protobuf to Base64');
