@@ -69,23 +69,31 @@ export const MqttProvider = ({ children }) => {
           if (parsedData.isBinary && parsedData.message) {
             try {
               const binaryString = atob(parsedData.message);
-              const bytes = new Uint8Array(binaryString.length);
-              for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
+              const len = binaryString.length;
+              const bytes = new Uint8Array(len);
+              
+              // FIXED: Process in chunks to prevent stack overflow on large messages
+              const chunkSize = 8192; // 8KB chunks
+              for (let offset = 0; offset < len; offset += chunkSize) {
+                const end = Math.min(offset + chunkSize, len);
+                for (let i = offset; i < end; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
               }
 
               // Replace the base64 string with the decoded ArrayBuffer
               parsedData.payload = bytes.buffer;
-              console.log('📨 Message received:', parsedData.topic, '(', bytes.length, 'bytes)');
+              console.log('Message received:', parsedData.topic, '(', bytes.length, 'bytes)');
             } catch (decodeErr) {
               console.error('Failed to decode Base64 message:', decodeErr);
+              console.error('Message length:', parsedData.message?.length);
               // Keep original message if decode fails
               parsedData.payload = parsedData.message;
             }
           } else {
             // Plain text message
             parsedData.payload = parsedData.message;
-            console.log('📨 Message received:', parsedData.topic, '(text)');
+            console.log('Message received:', parsedData.topic, '(text)');
           }
 
           if (configRef.current?.onMessage) {
@@ -93,6 +101,11 @@ export const MqttProvider = ({ children }) => {
           }
         } catch (err) {
           console.error('Failed to parse MQTT message:', err);
+          console.error('Error details:', {
+            topic: data?.topic,
+            messageLength: data?.message?.length,
+            isBinary: data?.isBinary
+          });
         }
       })
     );
@@ -218,11 +231,16 @@ export const MqttProvider = ({ children }) => {
           bytes = message; // Already Uint8Array
         }
 
-        // Convert to Base64
+        // FIXED: Convert to Base64 in chunks to prevent stack overflow
         let binary = '';
         const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-          binary += String.fromCharCode(bytes[i]);
+        const chunkSize = 8192; // 8KB chunks
+        
+        for (let offset = 0; offset < len; offset += chunkSize) {
+          const end = Math.min(offset + chunkSize, len);
+          for (let i = offset; i < end; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
         }
         publishMessage = btoa(binary);
 
@@ -251,11 +269,11 @@ export const MqttProvider = ({ children }) => {
     });
   }, []);
 
-  // ⚡ NEW: Auto-reconnect control methods
+  // Auto-reconnect control methods
   const disableAutoReconnect = useCallback(() => {
     if (typeof MqttModule.disableAutoReconnect === 'function') {
       MqttModule.disableAutoReconnect();
-      console.log('⚡ Auto-reconnect disabled');
+      console.log('Auto-reconnect disabled');
     } else {
       console.warn('disableAutoReconnect not available in native module');
     }
@@ -264,7 +282,7 @@ export const MqttProvider = ({ children }) => {
   const enableAutoReconnect = useCallback(() => {
     if (typeof MqttModule.enableAutoReconnect === 'function') {
       MqttModule.enableAutoReconnect();
-      console.log('⚡ Auto-reconnect enabled');
+      console.log('Auto-reconnect enabled');
     } else {
       console.warn('enableAutoReconnect not available in native module');
     }
@@ -278,8 +296,8 @@ export const MqttProvider = ({ children }) => {
     subscribe,
     unsubscribe,
     publish,
-    disableAutoReconnect, // ⚡ NEW
-    enableAutoReconnect,  // ⚡ NEW
+    disableAutoReconnect,
+    enableAutoReconnect,
   };
 
   return <MqttContext.Provider value={value}>{children}</MqttContext.Provider>;
