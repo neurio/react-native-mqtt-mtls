@@ -251,6 +251,16 @@ export const MqttProvider = ({ children }) => {
     });
   }, []);
 
+  // ⚡ NEW: Expose setExpectingDisconnect method
+  const setExpectingDisconnect = useCallback((expecting) => {
+    if (typeof MqttModule.setExpectingDisconnect === 'function') {
+      MqttModule.setExpectingDisconnect(expecting);
+      console.log('⚡ Set expecting disconnect:', expecting);
+    } else {
+      console.warn('setExpectingDisconnect not available in native module');
+    }
+  }, []);
+
   const value = {
     isConnected,
     error,
@@ -259,6 +269,7 @@ export const MqttProvider = ({ children }) => {
     subscribe,
     unsubscribe,
     publish,
+    setExpectingDisconnect, // ⚡ NEW
   };
 
   return <MqttContext.Provider value={value}>{children}</MqttContext.Provider>;
