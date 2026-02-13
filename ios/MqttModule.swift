@@ -14,6 +14,9 @@ class MqttModule: RCTEventEmitter {
     private var clientIdentifier: String = ""
     private var connectionStartTime: Date?
     
+    // NEW: Auto-reconnect control
+    private var autoReconnectEnabled: Bool = true
+    
     private let logger = OSLog(subsystem: "com.neurio.generachome", category: "MqttModule")
     
     override init() {
@@ -59,9 +62,41 @@ class MqttModule: RCTEventEmitter {
         brokerUrl = ""
         clientIdentifier = ""
         connectionStartTime = nil
+        autoReconnectEnabled = true  // NEW: Reset to default
         
-        os_log("✓ Cleanup complete", log: logger, type: .info)
+        os_log("Cleanup complete", log: logger, type: .info)
     }
+    
+    // ============================================================================
+    // NEW: AUTO-RECONNECT CONTROL METHODS
+    // ============================================================================
+    
+    @objc
+    func disableAutoReconnect() {
+        autoReconnectEnabled = false
+        if let client = mqttClient {
+            client.autoReconnect = false
+        }
+        os_log("Auto-reconnect DISABLED", log: logger, type: .info)
+    }
+    
+    @objc
+    func enableAutoReconnect() {
+        autoReconnectEnabled = true
+        if let client = mqttClient {
+            client.autoReconnect = true
+        }
+        os_log("Auto-reconnect ENABLED", log: logger, type: .info)
+    }
+    
+    @objc
+    func isAutoReconnectEnabled(_ callback: @escaping RCTResponseSenderBlock) {
+        callback([autoReconnectEnabled])
+    }
+    
+    // ============================================================================
+    // EXISTING METHODS (unchanged except for noted additions)
+    // ============================================================================
     
     @objc
     func cleanup(_ callback: @escaping RCTResponseSenderBlock) {
@@ -92,6 +127,9 @@ class MqttModule: RCTEventEmitter {
             os_log("Found existing client, cleaning up before new connection...", log: logger, type: .info)
             cleanupConnection()
         }
+        
+        // NEW: Reset auto-reconnect on new connection
+        autoReconnectEnabled = true
         
         connectionStartTime = Date()
         
@@ -129,7 +167,7 @@ class MqttModule: RCTEventEmitter {
                 return
             }
             
-            os_log("✓ All required parameters present", log: logger, type: .info)
+            os_log("All required parameters present", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
             guard let expectedCN = brokerCommonName, !expectedCN.isEmpty else {
@@ -139,7 +177,7 @@ class MqttModule: RCTEventEmitter {
                 return
             }
             
-            os_log("✓ Broker CN validation enabled: %{public}@", log: logger, type: .info, expectedCN)
+            os_log("Broker CN validation enabled: %{public}@", log: logger, type: .info, expectedCN)
             os_log("", log: logger, type: .info)
             
             os_log("STEP 2: Parsing broker URL...", log: logger, type: .info)
@@ -157,7 +195,7 @@ class MqttModule: RCTEventEmitter {
             os_log("  - Host: %{public}@", log: logger, type: .info, host)
             os_log("  - Port: %d", log: logger, type: .info, port)
             os_log("  - Use TLS: %{public}@", log: logger, type: .info, String(useTLS))
-            os_log("✓ URL parsed successfully", log: logger, type: .info)
+            os_log("URL parsed successfully", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
             os_log("STEP 3: Creating CocoaMQTT client...", log: logger, type: .info)
@@ -169,12 +207,14 @@ class MqttModule: RCTEventEmitter {
             client.password = ""
             client.keepAlive = 60
             client.cleanSession = true
-            client.autoReconnect = true
+            
+            // NEW: Set auto-reconnect based on flag
+            client.autoReconnect = autoReconnectEnabled
             
             os_log("  - keepAlive: 60 seconds", log: logger, type: .info)
             os_log("  - cleanSession: true", log: logger, type: .info)
-            os_log("  - autoReconnect: true", log: logger, type: .info)
-            os_log("✓ Client configured", log: logger, type: .info)
+            os_log("  - autoReconnect: %{public}@", log: logger, type: .info, String(client.autoReconnect))
+            os_log("Client configured", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
             if useTLS {
@@ -196,7 +236,7 @@ class MqttModule: RCTEventEmitter {
                 }
                 
                 self.expectedBrokerCN = expectedCN
-                os_log("  ✓ CA certificates validated", log: logger, type: .info)
+                os_log("  CA certificates validated", log: logger, type: .info)
                 os_log("", log: logger, type: .info)
                 
                 os_log("  4b: Creating SSL settings...", log: logger, type: .info)
@@ -211,7 +251,7 @@ class MqttModule: RCTEventEmitter {
                     useHardwareKey: useHardwareKey
                 )
                 
-                os_log("  ✓ SSL settings created", log: logger, type: .info)
+                os_log("  SSL settings created", log: logger, type: .info)
                 os_log("    - Settings keys: %{public}@", log: logger, type: .info, sslSettings.keys.joined(separator: ", "))
                 os_log("", log: logger, type: .info)
                 
@@ -220,7 +260,7 @@ class MqttModule: RCTEventEmitter {
                 client.sslSettings = sslSettings
                 client.delegate = self
                 
-                os_log("  ✓ SSL enabled on client", log: logger, type: .info)
+                os_log("  SSL enabled on client", log: logger, type: .info)
                 os_log("    - enableSSL: true", log: logger, type: .info)
                 os_log("    - allowUntrustCACertificate: true", log: logger, type: .info)
                 os_log("    - delegate set", log: logger, type: .info)
@@ -234,7 +274,7 @@ class MqttModule: RCTEventEmitter {
             self.brokerUrl = broker
             self.clientIdentifier = clientId
             self.mqttClient = client
-            os_log("✓ State stored", log: logger, type: .info)
+            os_log("State stored", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
             os_log("STEP 6: Initiating connection...", log: logger, type: .info)
@@ -245,10 +285,10 @@ class MqttModule: RCTEventEmitter {
             os_log("  - client.connect() returned: %{public}@", log: logger, type: .info, String(result))
             
             if result {
-                os_log("✓ Connection initiated successfully", log: logger, type: .info)
+                os_log("Connection initiated successfully", log: logger, type: .info)
                 os_log("  - Waiting for delegate callbacks...", log: logger, type: .info)
             } else {
-                os_log("✗ Connection initiation FAILED", log: logger, type: .error)
+                os_log("Connection initiation FAILED", log: logger, type: .error)
                 errorCallback(["Failed to start connection - client.connect() returned false"])
             }
             
@@ -291,7 +331,7 @@ class MqttModule: RCTEventEmitter {
         
         cleanupConnection()
         
-        os_log("✓ Disconnected and cleaned up", log: logger, type: .info)
+        os_log("Disconnected and cleaned up", log: logger, type: .info)
         os_log("", log: logger, type: .info)
         
         successCallback(["Disconnected successfully"])
@@ -304,14 +344,14 @@ class MqttModule: RCTEventEmitter {
         os_log("SUBSCRIBE: topic=%{public}@, qos=%d", log: logger, type: .info, topic, qos)
         
         guard let client = mqttClient, client.connState == .connected else {
-            os_log("✗ Subscribe failed: Client not connected", log: logger, type: .error)
+            os_log("Subscribe failed: Client not connected", log: logger, type: .error)
             errorCallback(["Client not connected"])
             return
         }
         
         let mqttQos = CocoaMQTTQoS(rawValue: UInt8(qos)) ?? .qos1
         client.subscribe(topic, qos: mqttQos)
-        os_log("✓ Subscribe request sent", log: logger, type: .info)
+        os_log("Subscribe request sent", log: logger, type: .info)
         successCallback(["Subscribed to \(topic)"])
     }
     
@@ -322,13 +362,13 @@ class MqttModule: RCTEventEmitter {
         os_log("UNSUBSCRIBE: topic=%{public}@", log: logger, type: .info, topic)
         
         guard let client = mqttClient, client.connState == .connected else {
-            os_log("✗ Unsubscribe failed: Client not connected", log: logger, type: .error)
+            os_log("Unsubscribe failed: Client not connected", log: logger, type: .error)
             errorCallback(["Client not connected"])
             return
         }
         
         client.unsubscribe(topic)
-        os_log("✓ Unsubscribe request sent", log: logger, type: .info)
+        os_log("Unsubscribe request sent", log: logger, type: .info)
         successCallback(["Unsubscribed from \(topic)"])
     }
     
@@ -339,7 +379,7 @@ class MqttModule: RCTEventEmitter {
         os_log("PUBLISH: topic=%{public}@, qos=%d, retained=%{public}@", log: logger, type: .info, topic, qos, String(retained))
         
         guard let client = mqttClient, client.connState == .connected else {
-            os_log("✗ Publish failed: Client not connected", log: logger, type: .error)
+            os_log("Publish failed: Client not connected", log: logger, type: .error)
             errorCallback(["Client not connected"])
             return
         }
@@ -350,15 +390,15 @@ class MqttModule: RCTEventEmitter {
             let payload = [UInt8](binaryData)
             let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
             client.publish(mqttMessage)
-            os_log("✓ Published binary data (%d bytes)", log: logger, type: .info, payload.count)
+            os_log("Published binary data (%d bytes)", log: logger, type: .info, payload.count)
         } else {
             if let stringData = message.data(using: .utf8) {
                 let payload = [UInt8](stringData)
                 let mqttMessage = CocoaMQTTMessage(topic: topic, payload: payload, qos: mqttQos, retained: retained)
                 client.publish(mqttMessage)
-                os_log("✓ Published string data (%d bytes)", log: logger, type: .info, payload.count)
+                os_log("Published string data (%d bytes)", log: logger, type: .info, payload.count)
             } else {
-                os_log("✗ Failed to encode message", log: logger, type: .error)
+                os_log("Failed to encode message", log: logger, type: .error)
                 errorCallback(["Failed to encode message as UTF-8"])
                 return
             }
@@ -375,7 +415,7 @@ class MqttModule: RCTEventEmitter {
     }
     
     // ============================================================================
-    // SSL CONFIGURATION
+    // SSL CONFIGURATION (unchanged)
     // ============================================================================
     
     private func createSSLSettings(
@@ -386,7 +426,7 @@ class MqttModule: RCTEventEmitter {
         useHardwareKey: Bool
     ) throws -> [String: NSObject] {
         
-        os_log("      → createSSLSettings() called", log: logger, type: .info)
+        os_log("      createSSLSettings() called", log: logger, type: .info)
         os_log("        - privateKeyAlias: %{public}@", log: logger, type: .info, privateKeyAlias)
         os_log("        - useHardwareKey: %{public}@", log: logger, type: .info, String(useHardwareKey))
         os_log("        - sniHostname: %{public}@", log: logger, type: .info, sniHostname ?? "nil")
@@ -397,7 +437,7 @@ class MqttModule: RCTEventEmitter {
             useHardwareKey: useHardwareKey
         )
         
-        os_log("        ✓ Identity created", log: logger, type: .info)
+        os_log("        Identity created", log: logger, type: .info)
         os_log("        - Intermediate certificates: %d", log: logger, type: .info, intermediates.count)
         for (index, cert) in intermediates.enumerated() {
             if let summary = SecCertificateCopySubjectSummary(cert) as String? {
@@ -405,9 +445,6 @@ class MqttModule: RCTEventEmitter {
             }
         }
         
-        // kCFStreamSSLCertificates expects: [identity, intermediate1, intermediate2, ...]
-        // The identity contains the leaf. Intermediates must follow so the server
-        // can walk the chain up to the root it already trusts.
         var certChain: [Any] = [identity]
         certChain.append(contentsOf: intermediates)
         
@@ -416,41 +453,39 @@ class MqttModule: RCTEventEmitter {
         
         if let sniHost = sniHostname, !sniHost.isEmpty {
             settings[kCFStreamSSLPeerName as String] = sniHost as NSString
-            os_log("        ✓ SNI hostname set: %{public}@", log: logger, type: .info, sniHost)
+            os_log("        SNI hostname set: %{public}@", log: logger, type: .info, sniHost)
         }
         
-        os_log("        ✓ SSL settings dictionary complete", log: logger, type: .info)
+        os_log("        SSL settings dictionary complete", log: logger, type: .info)
         
         return settings
     }
     
     private func createIdentity(privateKeyAlias: String, clientCertPem: String, useHardwareKey: Bool) throws -> (SecIdentity, [SecCertificate]) {
-        os_log("        → createIdentity() called", log: logger, type: .info)
+        os_log("        createIdentity() called", log: logger, type: .info)
         os_log("          - Loading private key from keychain...", log: logger, type: .info)
         
         guard let privateKey = try loadPrivateKeyFromKeychain(alias: privateKeyAlias) else {
-            os_log("          ✗ Private key not found", log: logger, type: .error)
+            os_log("          Private key not found", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Private key not found: \(privateKeyAlias)"])
         }
         
-        os_log("          ✓ Private key loaded", log: logger, type: .info)
+        os_log("          Private key loaded", log: logger, type: .info)
         os_log("          - Parsing client certificate PEM...", log: logger, type: .info)
         
         let certificates = try parseCertificatesFromPEM(clientCertPem)
         guard let certificate = certificates.first else {
-            os_log("          ✗ No certificates found in PEM", log: logger, type: .error)
+            os_log("          No certificates found in PEM", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Failed to parse client certificate"])
         }
         
-        // Everything after the leaf — these are the intermediates that need to
-        // travel with the identity so the server can build the full chain.
         let intermediates = Array(certificates.dropFirst())
         os_log("          - Leaf certificate: 1", log: logger, type: .info)
         os_log("          - Intermediate certificates: %d", log: logger, type: .info, intermediates.count)
         
-        os_log("          ✓ Client certificate parsed", log: logger, type: .info)
+        os_log("          Client certificate parsed", log: logger, type: .info)
         
         if let summary = SecCertificateCopySubjectSummary(certificate) as String? {
             os_log("          - Client cert subject: %{public}@", log: logger, type: .info, summary)
@@ -478,12 +513,12 @@ class MqttModule: RCTEventEmitter {
         os_log("          - Add status: %d", log: logger, type: .info, addStatus)
         
         guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
-            os_log("          ✗ Failed to add certificate", log: logger, type: .error)
+            os_log("          Failed to add certificate", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: Int(addStatus),
                         userInfo: [NSLocalizedDescriptionKey: "Failed to add certificate: \(addStatus)"])
         }
         
-        os_log("          ✓ Certificate added to keychain", log: logger, type: .info)
+        os_log("          Certificate added to keychain", log: logger, type: .info)
         os_log("          - Creating identity...", log: logger, type: .info)
         
         let identityQuery: [String: Any] = [
@@ -497,21 +532,21 @@ class MqttModule: RCTEventEmitter {
         os_log("          - Identity query status: %d", log: logger, type: .info, identityStatus)
         
         guard identityStatus == errSecSuccess else {
-            os_log("          ✗ Failed to create identity", log: logger, type: .error)
+            os_log("          Failed to create identity", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Failed to create identity: \(identityStatus)"])
         }
         
-        os_log("          ✓ Identity created successfully", log: logger, type: .info)
+        os_log("          Identity created successfully", log: logger, type: .info)
         return (identityRef as! SecIdentity, intermediates)
     }
     
     private func loadPrivateKeyFromKeychain(alias: String) throws -> SecKey? {
-        os_log("            → loadPrivateKeyFromKeychain()", log: logger, type: .info)
+        os_log("            loadPrivateKeyFromKeychain()", log: logger, type: .info)
         os_log("              - Alias: %{public}@", log: logger, type: .info, alias)
         
         guard let tag = alias.data(using: .utf8) else {
-            os_log("              ✗ Invalid alias (not UTF-8)", log: logger, type: .error)
+            os_log("              Invalid alias (not UTF-8)", log: logger, type: .error)
             throw NSError(domain: "MqttModule", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Invalid alias"])
         }
@@ -531,16 +566,16 @@ class MqttModule: RCTEventEmitter {
         os_log("              - Query status: %d", log: logger, type: .info, status)
         
         guard status == errSecSuccess else {
-            os_log("              ✗ Key not found (status=%d)", log: logger, type: .error, status)
+            os_log("              Key not found (status=%d)", log: logger, type: .error, status)
             return nil
         }
         
-        os_log("              ✓ Private key found", log: logger, type: .info)
+        os_log("              Private key found", log: logger, type: .info)
         return (item as! SecKey)
     }
     
     private func parseCertificatesFromPEM(_ pem: String) throws -> [SecCertificate] {
-        os_log("            → parseCertificatesFromPEM()", log: logger, type: .info)
+        os_log("            parseCertificatesFromPEM()", log: logger, type: .info)
         
         var certificates: [SecCertificate] = []
         
@@ -563,28 +598,28 @@ class MqttModule: RCTEventEmitter {
             
             guard let certData = Data(base64Encoded: base64),
                   let cert = SecCertificateCreateWithData(nil, certData as CFData) else {
-                os_log("              ✗ Failed to parse certificate block %d", log: logger, type: .error, index)
+                os_log("              Failed to parse certificate block %d", log: logger, type: .error, index)
                 continue
             }
             
             certificates.append(cert)
             
             if let summary = SecCertificateCopySubjectSummary(cert) as String? {
-                os_log("              ✓ Parsed certificate: %{public}@", log: logger, type: .info, summary)
+                os_log("              Parsed certificate: %{public}@", log: logger, type: .info, summary)
             }
         }
         
-        os_log("            ✓ Total certificates parsed: %d", log: logger, type: .info, certificates.count)
+        os_log("            Total certificates parsed: %d", log: logger, type: .info, certificates.count)
         
         return certificates
     }
     
     // ============================================================================
-    // CN EXTRACTION
+    // CN EXTRACTION (unchanged)
     // ============================================================================
     
     private func extractCommonName(from certificate: SecCertificate) -> String? {
-        os_log("              → extractCommonName()", log: logger, type: .info)
+        os_log("              extractCommonName()", log: logger, type: .info)
         
         if let cn = extractCNFromSubjectSummary(certificate) {
             return cn
@@ -595,11 +630,11 @@ class MqttModule: RCTEventEmitter {
         let status = SecCertificateCopyCommonName(certificate, &commonName)
         
         if status == errSecSuccess, let cn = commonName as String? {
-            os_log("              ✓ CN via deprecated API: %{public}@", log: logger, type: .info, cn)
+            os_log("              CN via deprecated API: %{public}@", log: logger, type: .info, cn)
             return cn
         }
         
-        os_log("              ✗ Failed to extract CN", log: logger, type: .error)
+        os_log("              Failed to extract CN", log: logger, type: .error)
         return nil
     }
     
@@ -611,7 +646,7 @@ class MqttModule: RCTEventEmitter {
         os_log("              - Certificate summary: %{public}@", log: logger, type: .info, summary)
         
         if !summary.contains("=") && !summary.contains(",") {
-            os_log("              ✓ CN (simple): %{public}@", log: logger, type: .info, summary)
+            os_log("              CN (simple): %{public}@", log: logger, type: .info, summary)
             return summary
         }
         
@@ -621,7 +656,7 @@ class MqttModule: RCTEventEmitter {
             
             if trimmed.lowercased().hasPrefix("cn=") {
                 let cn = String(trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces))
-                os_log("              ✓ CN (parsed): %{public}@", log: logger, type: .info, cn)
+                os_log("              CN (parsed): %{public}@", log: logger, type: .info, cn)
                 return cn
             }
         }
@@ -631,7 +666,7 @@ class MqttModule: RCTEventEmitter {
             let trimmed = component.trimmingCharacters(in: .whitespaces)
             if trimmed.lowercased().hasPrefix("cn=") {
                 let cn = String(trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces))
-                os_log("              ✓ CN (slash-parsed): %{public}@", log: logger, type: .info, cn)
+                os_log("              CN (slash-parsed): %{public}@", log: logger, type: .info, cn)
                 return cn
             }
         }
@@ -666,11 +701,8 @@ extension MqttModule: CocoaMQTTDelegate {
         }
         
         os_log("", log: logger, type: .info)
-        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
-        os_log("║ DELEGATE: didStateChangeTo                           ║", log: logger, type: .info)
-        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
-        os_log("║ State: %{public}@%{public}@", log: logger, type: .info, stateString, elapsed)
-        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("DELEGATE: didStateChangeTo", log: logger, type: .info)
+        os_log("State: %{public}@%{public}@", log: logger, type: .info, stateString, elapsed)
         os_log("", log: logger, type: .info)
     }
     
@@ -682,72 +714,54 @@ extension MqttModule: CocoaMQTTDelegate {
         }
         
         os_log("", log: logger, type: .info)
-        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
-        os_log("║ DELEGATE: didReceive trust (TLS HANDSHAKE)           ║", log: logger, type: .info)
-        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
-        os_log("║ Time: %{public}@", log: logger, type: .info, elapsed)
-        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("DELEGATE: didReceive trust (TLS HANDSHAKE)", log: logger, type: .info)
+        os_log("Time: %{public}@", log: logger, type: .info, elapsed)
         os_log("", log: logger, type: .info)
         
-        // STEP 1: Verify we have an expected CN to pin against
         os_log("  STEP 1: Checking expected CN...", log: logger, type: .info)
         guard let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty else {
-            os_log("  ✗ No expected CN configured", log: logger, type: .error)
+            os_log("  No expected CN configured", log: logger, type: .error)
             completionHandler(false)
             return
         }
-        os_log("  ✓ Expected CN: %{public}@", log: logger, type: .info, expectedCN)
+        os_log("  Expected CN: %{public}@", log: logger, type: .info, expectedCN)
         
-        // STEP 2: Pull the leaf cert off the trust object
         os_log("  STEP 2: Retrieving server certificate...", log: logger, type: .info)
         guard let serverCert = SecTrustGetCertificateAtIndex(trust, 0) else {
-            os_log("  ✗ Cannot retrieve server certificate", log: logger, type: .error)
+            os_log("  Cannot retrieve server certificate", log: logger, type: .error)
             completionHandler(false)
             return
         }
-        os_log("  ✓ Server certificate retrieved", log: logger, type: .info)
+        os_log("  Server certificate retrieved", log: logger, type: .info)
         
         if let summary = SecCertificateCopySubjectSummary(serverCert) as String? {
             os_log("    - Server cert subject: %{public}@", log: logger, type: .info, summary)
         }
         
-        // STEP 3: Extract the CN from the server cert
         os_log("  STEP 3: Extracting CN from server certificate...", log: logger, type: .info)
         guard let actualCN = extractCommonName(from: serverCert) else {
-            os_log("  ✗ Cannot extract CN from server certificate", log: logger, type: .error)
+            os_log("  Cannot extract CN from server certificate", log: logger, type: .error)
             completionHandler(false)
             return
         }
-        os_log("  ✓ Actual CN: %{public}@", log: logger, type: .info, actualCN)
+        os_log("  Actual CN: %{public}@", log: logger, type: .info, actualCN)
         
-        // STEP 4: Pin — compare extracted CN against the known device identifier
         os_log("  STEP 4: Comparing CNs...", log: logger, type: .info)
         os_log("    - Expected: '%{public}@'", log: logger, type: .info, expectedCN)
         os_log("    - Actual:   '%{public}@'", log: logger, type: .info, actualCN)
         
         if actualCN != expectedCN {
-            os_log("  ✗ CN MISMATCH!", log: logger, type: .error)
+            os_log("  CN MISMATCH!", log: logger, type: .error)
             os_log("", log: logger, type: .error)
-            os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .error)
-            os_log("║ TLS VALIDATION: FAILED ✗ (CN mismatch)              ║", log: logger, type: .error)
-            os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .error)
+            os_log("TLS VALIDATION: FAILED (CN mismatch)", log: logger, type: .error)
             os_log("", log: logger, type: .error)
             completionHandler(false)
             return
         }
-        os_log("  ✓ CN matches!", log: logger, type: .info)
-        
-        // CN pinning against the known device serial is the trust model here.
-        // SecTrustEvaluateWithError is intentionally not called: Apple enforces a
-        // 398-day max validity on leaf certs, but the broker cert is provisioned by
-        // gateway firmware (Penguin CA) with a longer validity we cannot control.
-        // The CN check against the expected device identifier is sufficient for a
-        // private-network IoT trust boundary.
+        os_log("  CN matches!", log: logger, type: .info)
         
         os_log("", log: logger, type: .info)
-        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
-        os_log("║ TLS VALIDATION: SUCCESS ✓ (CN pinned)               ║", log: logger, type: .info)
-        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("TLS VALIDATION: SUCCESS (CN pinned)", log: logger, type: .info)
         os_log("", log: logger, type: .info)
         completionHandler(true)
     }
@@ -760,23 +774,32 @@ extension MqttModule: CocoaMQTTDelegate {
         }
         
         os_log("", log: logger, type: .info)
-        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
-        os_log("║ DELEGATE: didConnectAck                               ║", log: logger, type: .info)
-        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
-        os_log("║ ACK: %{public}@%{public}@", log: logger, type: .info, String(describing: ack), elapsed)
-        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+        os_log("DELEGATE: didConnectAck", log: logger, type: .info)
+        os_log("ACK: %{public}@%{public}@", log: logger, type: .info, String(describing: ack), elapsed)
         os_log("", log: logger, type: .info)
         
         if ack == .accept {
-            os_log("✓✓✓ MQTT CONNECTION SUCCESSFUL ✓✓✓", log: logger, type: .info)
+            // NEW: Check auto-reconnect flag before calling success callback
+            if !autoReconnectEnabled {
+                os_log("Connection success (auto-reconnect disabled - expected)", log: logger, type: .info)
+                return
+            }
+            
+            os_log("MQTT CONNECTION SUCCESSFUL", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             self.sendEvent(withName: "MqttConnected", body: "Connected")
             connectSuccessCallback?(["Connected to \(brokerUrl)"])
             connectSuccessCallback = nil
             connectErrorCallback = nil
         } else {
+            // NEW: Check auto-reconnect flag before calling error callback
+            if !autoReconnectEnabled {
+                os_log("Connection rejected (auto-reconnect disabled - expected)", log: logger, type: .info)
+                return
+            }
+            
             let error = "Connection rejected: \(ack)"
-            os_log("✗✗✗ MQTT CONNECTION REJECTED ✗✗✗", log: logger, type: .error)
+            os_log("MQTT CONNECTION REJECTED", log: logger, type: .error)
             os_log("Reason: %{public}@", log: logger, type: .error, error)
             os_log("", log: logger, type: .error)
             connectErrorCallback?([error])
@@ -839,18 +862,22 @@ extension MqttModule: CocoaMQTTDelegate {
         let errorMsg = err?.localizedDescription ?? "Clean disconnect"
         
         os_log("", log: logger, type: .info)
-        os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
-        os_log("║ DELEGATE: mqttDidDisconnect                           ║", log: logger, type: .info)
-        os_log("╠═══════════════════════════════════════════════════════╣", log: logger, type: .info)
-        os_log("║ Reason: %{public}@%{public}@", log: logger, type: .info, errorMsg, elapsed)
+        os_log("DELEGATE: mqttDidDisconnect", log: logger, type: .info)
+        os_log("Reason: %{public}@%{public}@", log: logger, type: .info, errorMsg, elapsed)
         
         if let error = err {
-            os_log("║ Domain: %{public}@", log: logger, type: .info, (error as NSError).domain)
-            os_log("║ Code: %d", log: logger, type: .info, (error as NSError).code)
+            os_log("Domain: %{public}@", log: logger, type: .info, (error as NSError).domain)
+            os_log("Code: %d", log: logger, type: .info, (error as NSError).code)
         }
         
-        os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
         os_log("", log: logger, type: .info)
+        
+        // NEW: Check auto-reconnect flag before treating as error
+        if !autoReconnectEnabled {
+            os_log("Connection lost (auto-reconnect disabled - expected)", log: logger, type: .info)
+            self.sendEvent(withName: "MqttDisconnected", body: "Connection lost (expected)")
+            return
+        }
         
         self.sendEvent(withName: "MqttDisconnected", body: errorMsg)
         

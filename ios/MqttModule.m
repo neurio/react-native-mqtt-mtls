@@ -36,4 +36,9 @@ RCT_EXTERN_METHOD(publish:(NSString *)topic
 
 RCT_EXTERN_METHOD(isConnected:(RCTResponseSenderBlock)callback)
 
+// Auto-reconnect control methods
+RCT_EXTERN_METHOD(disableAutoReconnect)
+RCT_EXTERN_METHOD(enableAutoReconnect)
+RCT_EXTERN_METHOD(isAutoReconnectEnabled:(RCTResponseSenderBlock)callback)
+
 @end

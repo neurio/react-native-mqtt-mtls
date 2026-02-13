@@ -251,6 +251,25 @@ export const MqttProvider = ({ children }) => {
     });
   }, []);
 
+  // ⚡ NEW: Auto-reconnect control methods
+  const disableAutoReconnect = useCallback(() => {
+    if (typeof MqttModule.disableAutoReconnect === 'function') {
+      MqttModule.disableAutoReconnect();
+      console.log('⚡ Auto-reconnect disabled');
+    } else {
+      console.warn('disableAutoReconnect not available in native module');
+    }
+  }, []);
+
+  const enableAutoReconnect = useCallback(() => {
+    if (typeof MqttModule.enableAutoReconnect === 'function') {
+      MqttModule.enableAutoReconnect();
+      console.log('⚡ Auto-reconnect enabled');
+    } else {
+      console.warn('enableAutoReconnect not available in native module');
+    }
+  }, []);
+
   const value = {
     isConnected,
     error,
@@ -259,6 +278,8 @@ export const MqttProvider = ({ children }) => {
     subscribe,
     unsubscribe,
     publish,
+    disableAutoReconnect, // ⚡ NEW
+    enableAutoReconnect,  // ⚡ NEW
   };
 
   return <MqttContext.Provider value={value}>{children}</MqttContext.Provider>;

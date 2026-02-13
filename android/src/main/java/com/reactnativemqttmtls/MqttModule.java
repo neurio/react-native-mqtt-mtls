@@ -25,6 +25,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
     private static final String SOFTWARE_KEYSTORE_FILE = "software_keys.p12";
     private final ReactApplicationContext reactContext;
     private MqttAndroidClient client;
+    
+    // Control auto-reconnect behavior
+    private volatile boolean autoReconnectEnabled = true;
 
     public MqttModule(ReactApplicationContext reactContext) {
         super(reactContext);
@@ -54,7 +57,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
         
         if (client != null) {
             try {
-                // Disable auto-reconnect to prevent reconnection attempts
                 if (client.isConnected()) {
                     Log.d(TAG, "  - Client is connected, disconnecting...");
                     try {
@@ -71,6 +73,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 Log.w(TAG, "  - Error during cleanup (non-critical): " + e.getMessage());
             } finally {
                 client = null;
+                autoReconnectEnabled = true; // Reset to default
                 Log.d(TAG, "✓ Cleanup complete");
             }
         } else {
@@ -84,6 +87,40 @@ public class MqttModule extends ReactContextBaseJavaModule {
         return "MqttModule";
     }
 
+    // ============================================================================
+    // AUTO-RECONNECT CONTROL METHODS (exposed to React Native)
+    // ============================================================================
+    
+    /**
+     * Disable auto-reconnect
+     * Call this before operations that will cause expected disconnects (e.g., Penguin WiFi change)
+     */
+    @ReactMethod
+    public void disableAutoReconnect() {
+        autoReconnectEnabled = false;
+        Log.d(TAG, "Auto-reconnect DISABLED");
+    }
+    
+    /**
+     * Enable auto-reconnect
+     * Call this to restore normal reconnection behavior
+     */
+    @ReactMethod
+    public void enableAutoReconnect() {
+        autoReconnectEnabled = true;
+        Log.d(TAG, "Auto-reconnect ENABLED");
+    }
+    
+    /**
+     * Check if auto-reconnect is enabled
+     */
+    @ReactMethod
+    public void isAutoReconnectEnabled(Callback callback) {
+        if (callback != null) {
+            callback.invoke(autoReconnectEnabled);
+        }
+    }
+    
     // ============================================================================
     // CLEANUP METHOD (exposed to React Native)
     // ============================================================================
@@ -317,6 +354,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 cleanupConnection();
             }
             
+            // Reset auto-reconnect to enabled on new connection
+            autoReconnectEnabled = true;
+            
             String privateKeyAlias = certificates.hasKey("privateKeyAlias")
                     ? certificates.getString("privateKeyAlias")
                     : null;
@@ -347,7 +387,8 @@ public class MqttModule extends ReactContextBaseJavaModule {
             options.setCleanSession(true);
             options.setConnectionTimeout(30);
             options.setKeepAliveInterval(60);
-            options.setAutomaticReconnect(true);
+            // ⚡ CRITICAL: Disable automatic reconnect - we'll handle it manually based on autoReconnectEnabled flag
+            options.setAutomaticReconnect(false);
 
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
@@ -368,7 +409,15 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 @Override
                 public void connectionLost(Throwable cause) {
                     String errorMsg = cause != null ? cause.getMessage() : "Unknown";
-                    Log.w(TAG, "MQTT connection lost: " + errorMsg);
+                    
+                    // ⚡ Check auto-reconnect flag
+                    if (!autoReconnectEnabled) {
+                        Log.i(TAG, "✓ Connection lost (auto-reconnect disabled - expected): " + errorMsg);
+                        sendEvent("MqttDisconnected", "Connection lost (expected): " + errorMsg);
+                        return;
+                    }
+                    
+                    Log.w(TAG, "MQTT connection lost (unexpected): " + errorMsg);
                     sendEvent("MqttDisconnected", "Connection lost: " + errorMsg);
                 }
 
@@ -414,6 +463,13 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
+                    // ⚡ Check auto-reconnect flag for connection failures
+                    if (!autoReconnectEnabled) {
+                        Log.i(TAG, "✓ Connection failed (auto-reconnect disabled - expected)");
+                        // Don't invoke error callback for expected failures
+                        return;
+                    }
+                    
                     String errorMessage = "Connection failed";
                     
                     if (exception != null) {
@@ -713,6 +769,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                         try {
                             client.close();
                             client = null;
+                            autoReconnectEnabled = true; // Reset to default
                             Log.i(TAG, "✓ MQTT disconnected and cleaned up");
                             if (successCallback != null) {
                                 successCallback.invoke("Disconnected successfully");
@@ -735,6 +792,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                             if (client != null) {
                                 client.close();
                                 client = null;
+                                autoReconnectEnabled = true; // Reset to default
                             }
                         } catch (Exception e) {
                             Log.e(TAG, "Error force-closing client", e);
@@ -753,6 +811,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     Log.e(TAG, "Error closing disconnected client", e);
                 }
                 client = null;
+                autoReconnectEnabled = true; // Reset to default
                 if (successCallback != null) {
                     successCallback.invoke("Disconnected successfully");
                 }
@@ -766,6 +825,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 if (client != null) {
                     client.close();
                     client = null;
+                    autoReconnectEnabled = true; // Reset to default
                 }
             } catch (Exception cleanupException) {
                 Log.e(TAG, "Cleanup error", cleanupException);

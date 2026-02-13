@@ -34,4 +34,7 @@ export interface MqttContextType {
   subscribe: (topic: string, qos?: number) => Promise<void>;
   unsubscribe: (topic: string) => Promise<void>;
   publish: (topic: string, message: string, qos?: number, retained?: boolean) => Promise<void>;
+  // Auto-reconnect control methods
+  disableAutoReconnect: () => void;
+  enableAutoReconnect: () => void;
 }
