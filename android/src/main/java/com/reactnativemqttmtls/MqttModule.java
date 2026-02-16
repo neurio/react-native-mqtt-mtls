@@ -388,7 +388,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             options.setConnectionTimeout(30);
             options.setKeepAliveInterval(60);
             // ⚡ CRITICAL: Disable automatic reconnect - we'll handle it manually based on autoReconnectEnabled flag
-            options.setAutomaticReconnect(false);
+            options.setAutomaticReconnect(autoReconnectEnabled);
 
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
