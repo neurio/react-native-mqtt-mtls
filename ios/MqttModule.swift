@@ -13,6 +13,9 @@ class MqttModule: RCTEventEmitter {
     private var brokerUrl: String = ""
     private var clientIdentifier: String = ""
     private var connectionStartTime: Date?
+
+    // Control auto-reconnect behavior
+    private var autoReconnectEnabled: Bool = true
     
     private let logger = OSLog(subsystem: "com.neurio.generachome", category: "MqttModule")
     
@@ -169,11 +172,11 @@ class MqttModule: RCTEventEmitter {
             client.password = ""
             client.keepAlive = 60
             client.cleanSession = true
-            client.autoReconnect = true
+            client.autoReconnect = autoReconnectEnabled
             
             os_log("  - keepAlive: 60 seconds", log: logger, type: .info)
             os_log("  - cleanSession: true", log: logger, type: .info)
-            os_log("  - autoReconnect: true", log: logger, type: .info)
+            os_log("  - autoReconnect: %{public}@", log: logger, type: .info, String(autoReconnectEnabled))
             os_log("✓ Client configured", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
@@ -268,6 +271,49 @@ class MqttModule: RCTEventEmitter {
         }
     }
     
+    // ============================================================================
+    // AUTO-RECONNECT CONTROL METHODS
+    // ============================================================================
+
+    @objc
+    func enableAutoReconnect(
+        _ successCallback: @escaping RCTResponseSenderBlock,
+        errorCallback: @escaping RCTResponseSenderBlock
+    ) {
+        os_log("enableAutoReconnect called", log: logger, type: .info)
+        autoReconnectEnabled = true
+
+        // Apply immediately to any live client
+        if let client = mqttClient {
+            client.autoReconnect = true
+            os_log("  - Applied autoReconnect=true to live client", log: logger, type: .info)
+        }
+
+        successCallback(["Auto-reconnect enabled"])
+    }
+
+    @objc
+    func disableAutoReconnect(
+        _ successCallback: @escaping RCTResponseSenderBlock,
+        errorCallback: @escaping RCTResponseSenderBlock
+    ) {
+        os_log("disableAutoReconnect called", log: logger, type: .info)
+        autoReconnectEnabled = false
+
+        // Apply immediately to any live client
+        if let client = mqttClient {
+            client.autoReconnect = false
+            os_log("  - Applied autoReconnect=false to live client", log: logger, type: .info)
+        }
+
+        successCallback(["Auto-reconnect disabled"])
+    }
+
+    @objc
+    func isAutoReconnectEnabled(_ callback: @escaping RCTResponseSenderBlock) {
+        callback([autoReconnectEnabled])
+    }
+
     @objc
     func disconnect(_ successCallback: @escaping RCTResponseSenderBlock,
                    errorCallback: @escaping RCTResponseSenderBlock) {

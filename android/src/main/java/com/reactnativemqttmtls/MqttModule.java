@@ -26,6 +26,9 @@ public class MqttModule extends ReactContextBaseJavaModule {
     private final ReactApplicationContext reactContext;
     private MqttAndroidClient client;
 
+    // Control auto-reconnect behavior
+    private volatile boolean autoReconnectEnabled = true;
+
     public MqttModule(ReactApplicationContext reactContext) {
         super(reactContext);
         this.reactContext = reactContext;
@@ -347,7 +350,8 @@ public class MqttModule extends ReactContextBaseJavaModule {
             options.setCleanSession(true);
             options.setConnectionTimeout(30);
             options.setKeepAliveInterval(60);
-            options.setAutomaticReconnect(true);
+            options.setAutomaticReconnect(autoReconnectEnabled);
+            Log.d(TAG, "AutoReconnect: " + autoReconnectEnabled);
 
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
@@ -687,6 +691,57 @@ public class MqttModule extends ReactContextBaseJavaModule {
             if (errorCallback != null) {
                 errorCallback.invoke("Publish failed: " + e.getMessage());
             }
+        }
+    }
+
+    // ============================================================================
+    // AUTO-RECONNECT CONTROL METHODS
+    // ============================================================================
+
+    @ReactMethod
+    public void enableAutoReconnect(Callback successCallback, Callback errorCallback) {
+        Log.d(TAG, "enableAutoReconnect called");
+        autoReconnectEnabled = true;
+
+        // Apply immediately to any live client
+        if (client != null) {
+            try {
+                client.setAutoReconnect(true);
+                Log.d(TAG, "  - Applied autoReconnect=true to live client");
+            } catch (Exception e) {
+                Log.w(TAG, "  - Could not apply to live client: " + e.getMessage());
+            }
+        }
+
+        if (successCallback != null) {
+            successCallback.invoke("Auto-reconnect enabled");
+        }
+    }
+
+    @ReactMethod
+    public void disableAutoReconnect(Callback successCallback, Callback errorCallback) {
+        Log.d(TAG, "disableAutoReconnect called");
+        autoReconnectEnabled = false;
+
+        // Apply immediately to any live client
+        if (client != null) {
+            try {
+                client.setAutoReconnect(false);
+                Log.d(TAG, "  - Applied autoReconnect=false to live client");
+            } catch (Exception e) {
+                Log.w(TAG, "  - Could not apply to live client: " + e.getMessage());
+            }
+        }
+
+        if (successCallback != null) {
+            successCallback.invoke("Auto-reconnect disabled");
+        }
+    }
+
+    @ReactMethod
+    public void isAutoReconnectEnabled(Callback callback) {
+        if (callback != null) {
+            callback.invoke(autoReconnectEnabled);
         }
     }
 
