@@ -19,6 +19,7 @@ export interface MqttConfig {
   brokerIp?: string;
   brokerCommonName?: string;
   certificates: MqttCertificates;
+  autoReconnect?: boolean;
   onMessage?: (message: MqttMessage) => void;
   onConnect?: () => void;
   onConnectionLost?: (error: string) => void;
@@ -28,10 +29,14 @@ export interface MqttConfig {
 
 export interface MqttContextType {
   isConnected: boolean;
+  autoReconnect: boolean;
   error: string | null;
   connect: (config: MqttConfig) => Promise<void>;
   disconnect: () => Promise<void>;
   subscribe: (topic: string, qos?: number) => Promise<void>;
   unsubscribe: (topic: string) => Promise<void>;
   publish: (topic: string, message: string, qos?: number, retained?: boolean) => Promise<void>;
+  enableAutoReconnect: () => Promise<string>;
+  disableAutoReconnect: () => Promise<string>;
+  isAutoReconnectEnabled: () => Promise<boolean>;
 }
