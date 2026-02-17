@@ -22,6 +22,7 @@ declare module 'react-native-mqtt-mtls' {
     brokerIp?: string;
     brokerCommonName?: string;
     certificates: MqttCertificates;
+    autoReconnect?: boolean;
     onMessage?: (message: MqttMessage) => void;
     onConnect?: () => void;
     onConnectionLost?: (error: string) => void;
@@ -31,12 +32,15 @@ declare module 'react-native-mqtt-mtls' {
 
   export interface MqttContextType {
     isConnected: boolean;
+    autoReconnect: boolean;
     error: string | null;
     connect: (config: MqttConfig) => Promise<void>;
     disconnect: () => Promise<void>;
     subscribe: (topic: string, qos?: number) => Promise<void>;
     unsubscribe: (topic: string) => Promise<void>;
     publish: (topic: string, message: string, qos?: number, retained?: boolean) => Promise<void>;
+    enableAutoReconnect: () => Promise<string>;
+    disableAutoReconnect: () => Promise<string>;
   }
 
   export interface MqttProviderProps {
@@ -46,11 +50,6 @@ declare module 'react-native-mqtt-mtls' {
   export const MqttProvider: React.FC<MqttProviderProps>;
   export function useMqtt(): MqttContextType;
 
-  /**
-   * Native MQTT Module interface
-   * Parameter order matches iOS/Android native implementations:
-   * broker, clientId, certificates, sniHostname, brokerIp, successCallback, errorCallback
-   */
   export interface MqttModuleType {
     connect(
       broker: string,
@@ -63,6 +62,10 @@ declare module 'react-native-mqtt-mtls' {
       errorCallback: (error: string) => void
     ): void;
     disconnect(
+      successCallback: (message: string) => void,
+      errorCallback: (error: string) => void
+    ): void;
+    cleanup(
       successCallback: (message: string) => void,
       errorCallback: (error: string) => void
     ): void;
@@ -86,6 +89,15 @@ declare module 'react-native-mqtt-mtls' {
       errorCallback: (error: string) => void
     ): void;
     isConnected(callback: (isConnected: boolean) => void): void;
+    enableAutoReconnect(
+      successCallback: (message: string) => void,
+      errorCallback: (error: string) => void
+    ): void;
+    disableAutoReconnect(
+      successCallback: (message: string) => void,
+      errorCallback: (error: string) => void
+    ): void;
+    isAutoReconnectEnabled(callback: (isEnabled: boolean) => void): void;
   }
 
   const MqttModule: MqttModuleType;
