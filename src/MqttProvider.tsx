@@ -306,6 +306,17 @@ export const MqttProvider = ({ children }) => {
     });
   }, []);
 
+  const isAutoReconnectEnabled = useCallback(async () => {
+    return new Promise<boolean>((resolve, reject) => {
+      MqttModule.isAutoReconnectEnabled(
+        (isEnabled) => {
+          console.log('isAutoReconnectEnabled:', isEnabled);
+          resolve(isEnabled);
+        }
+      );
+    });
+  }, []);
+
   const value = {
     isConnected,
     autoReconnect,
@@ -317,6 +328,7 @@ export const MqttProvider = ({ children }) => {
     publish,
     enableAutoReconnect,
     disableAutoReconnect,
+    isAutoReconnectEnabled,
   };
 
   return <MqttContext.Provider value={value}>{children}</MqttContext.Provider>;

@@ -41,6 +41,7 @@ declare module 'react-native-mqtt-mtls' {
     publish: (topic: string, message: string, qos?: number, retained?: boolean) => Promise<void>;
     enableAutoReconnect: () => Promise<string>;
     disableAutoReconnect: () => Promise<string>;
+    isAutoReconnectEnabled: () => Promise<boolean>;
   }
 
   export interface MqttProviderProps {
