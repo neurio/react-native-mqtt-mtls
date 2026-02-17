@@ -25,6 +25,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
     private static final String SOFTWARE_KEYSTORE_FILE = "software_keys.p12";
     private final ReactApplicationContext reactContext;
     private MqttAndroidClient client;
+    private MqttConnectOptions connectOptions;
 
     // Control auto-reconnect behavior
     private volatile boolean autoReconnectEnabled = true;
@@ -74,6 +75,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 Log.w(TAG, "  - Error during cleanup (non-critical): " + e.getMessage());
             } finally {
                 client = null;
+                connectOptions = null;
                 Log.d(TAG, "✓ Cleanup complete");
             }
         } else {
@@ -346,11 +348,11 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     brokerUrl,
                     clientId);
 
-            MqttConnectOptions options = new MqttConnectOptions();
-            options.setCleanSession(true);
-            options.setConnectionTimeout(30);
-            options.setKeepAliveInterval(60);
-            options.setAutomaticReconnect(autoReconnectEnabled);
+            connectOptions = new MqttConnectOptions();
+            connectOptions.setCleanSession(true);
+            connectOptions.setConnectionTimeout(30);
+            connectOptions.setKeepAliveInterval(60);
+            connectOptions.setAutomaticReconnect(autoReconnectEnabled);
             Log.d(TAG, "AutoReconnect: " + autoReconnectEnabled);
 
             SSLContext sslContext = createSSLContextFromKeystore(
@@ -360,7 +362,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     useHardwareKey,
                     brokerCommonName);
 
-            options.setSocketFactory(sslContext.getSocketFactory());
+            connectOptions.setSocketFactory(sslContext.getSocketFactory());
 
             client.setCallback(new MqttCallbackExtended() {
                 @Override
@@ -403,7 +405,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 }
             });
 
-            client.connect(options, null, new IMqttActionListener() {
+            client.connect(connectOptions, null, new IMqttActionListener() {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
                     Log.i(TAG, "MQTT CONNECTION SUCCESSFUL");
@@ -703,14 +705,10 @@ public class MqttModule extends ReactContextBaseJavaModule {
         Log.d(TAG, "enableAutoReconnect called");
         autoReconnectEnabled = true;
 
-        // Apply immediately to any live client
-        if (client != null) {
-            try {
-                client.setAutoReconnect(true);
-                Log.d(TAG, "  - Applied autoReconnect=true to live client");
-            } catch (Exception e) {
-                Log.w(TAG, "  - Could not apply to live client: " + e.getMessage());
-            }
+        // Apply immediately to live connectOptions if available
+        if (connectOptions != null) {
+            connectOptions.setAutomaticReconnect(true);
+            Log.d(TAG, "  - Applied autoReconnect=true to connectOptions");
         }
 
         if (successCallback != null) {
@@ -723,14 +721,10 @@ public class MqttModule extends ReactContextBaseJavaModule {
         Log.d(TAG, "disableAutoReconnect called");
         autoReconnectEnabled = false;
 
-        // Apply immediately to any live client
-        if (client != null) {
-            try {
-                client.setAutoReconnect(false);
-                Log.d(TAG, "  - Applied autoReconnect=false to live client");
-            } catch (Exception e) {
-                Log.w(TAG, "  - Could not apply to live client: " + e.getMessage());
-            }
+        // Apply immediately to live connectOptions if available
+        if (connectOptions != null) {
+            connectOptions.setAutomaticReconnect(false);
+            Log.d(TAG, "  - Applied autoReconnect=false to connectOptions");
         }
 
         if (successCallback != null) {
