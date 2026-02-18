@@ -898,10 +898,10 @@ extension MqttModule: CocoaMQTTDelegate {
         os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
         os_log("", log: logger, type: .info)
 
-        if !autoReconnectEnabled {
-            os_log("  - autoReconnect disabled, nulling client to stop reconnect timer", log: logger, type: .info)
-            mqttClient = nil
-        }
+        // Do NOT null the client here - let the library's auto-reconnect handle unexpected
+        // disconnects, or let the JS layer's manual reconnect flow create a new client.
+        // The cleanupConnection() call at the start of connect() will properly clean up
+        // the old client when a new connection is initiated.
 
         self.sendEvent(withName: "MqttDisconnected", body: errorMsg)
         
