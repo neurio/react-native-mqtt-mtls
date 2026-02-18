@@ -377,21 +377,15 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     Log.w(TAG, "MQTT connection lost: " + errorMsg);
 
                     if (!autoReconnectEnabled) {
-                        Log.d(TAG, "  - autoReconnect disabled, cleaning up client to stop reconnect scheduler");
+                        Log.d(TAG, "  - autoReconnect disabled, closing client to stop reconnect scheduler");
                         try {
                             if (client != null) {
-                                // Unregister callback first to prevent it from being called during cleanup
-                                client.setCallback(null);
-
-                                // Force close to stop the reconnect scheduler
                                 client.close();
-
-                                // Null out references
                                 client = null;
                                 connectOptions = null;
                             }
                         } catch (Exception e) {
-                            Log.w(TAG, "  - Error during cleanup: " + e.getMessage());
+                            Log.w(TAG, "  - Error closing client after intentional disconnect: " + e.getMessage());
                         }
                     }
 
