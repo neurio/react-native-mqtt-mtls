@@ -13,9 +13,6 @@ class MqttModule: RCTEventEmitter {
     private var brokerUrl: String = ""
     private var clientIdentifier: String = ""
     private var connectionStartTime: Date?
-
-    // Control auto-reconnect behavior
-    private var autoReconnectEnabled: Bool = true
     
     private let logger = OSLog(subsystem: "com.neurio.generachome", category: "MqttModule")
     
@@ -67,10 +64,7 @@ class MqttModule: RCTEventEmitter {
     }
     
     @objc
-    func cleanup(
-        _ successCallback: @escaping RCTResponseSenderBlock,
-        errorCallback: @escaping RCTResponseSenderBlock
-    ) {
+    func cleanup(_ callback: @escaping RCTResponseSenderBlock) {
         os_log("", log: logger, type: .info)
         os_log("───────────────────────────────────────────────────────", log: logger, type: .info)
         os_log("EXPLICIT CLEANUP REQUESTED", log: logger, type: .info)
@@ -79,7 +73,7 @@ class MqttModule: RCTEventEmitter {
         cleanupConnection()
         
         os_log("", log: logger, type: .info)
-        successCallback(["Cleanup successful"])
+        callback(["Cleanup successful"])
     }
     
     @objc
@@ -126,8 +120,8 @@ class MqttModule: RCTEventEmitter {
             os_log("  - rootCa present: %{public}@", log: logger, type: .info, String(rootCaPem != nil))
             os_log("  - useHardwareKey: %{public}@", log: logger, type: .info, String(useHardwareKey))
             
-            guard let rootCa = rootCaPem,
-                  let clientCert = clientCertPem,
+            guard let rootCa = rootCaPem, 
+                  let clientCert = clientCertPem, 
                   let keyAlias = privateKeyAlias else {
                 let error = "Missing required parameters (clientCert, privateKeyAlias, or rootCa)"
                 os_log("ERROR: %{public}@", log: logger, type: .error, error)
@@ -175,11 +169,11 @@ class MqttModule: RCTEventEmitter {
             client.password = ""
             client.keepAlive = 60
             client.cleanSession = true
-            client.autoReconnect = autoReconnectEnabled
+            client.autoReconnect = true
             
             os_log("  - keepAlive: 60 seconds", log: logger, type: .info)
             os_log("  - cleanSession: true", log: logger, type: .info)
-            os_log("  - autoReconnect: %{public}@", log: logger, type: .info, String(autoReconnectEnabled))
+            os_log("  - autoReconnect: true", log: logger, type: .info)
             os_log("✓ Client configured", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
@@ -274,49 +268,6 @@ class MqttModule: RCTEventEmitter {
         }
     }
     
-    // ============================================================================
-    // AUTO-RECONNECT CONTROL METHODS
-    // ============================================================================
-
-    @objc
-    func enableAutoReconnect(
-        _ successCallback: @escaping RCTResponseSenderBlock,
-        errorCallback: @escaping RCTResponseSenderBlock
-    ) {
-        os_log("enableAutoReconnect called", log: logger, type: .info)
-        autoReconnectEnabled = true
-
-        // Apply immediately to any live client
-        if let client = mqttClient {
-            client.autoReconnect = true
-            os_log("  - Applied autoReconnect=true to live client", log: logger, type: .info)
-        }
-
-        successCallback(["Auto-reconnect enabled"])
-    }
-
-    @objc
-    func disableAutoReconnect(
-        _ successCallback: @escaping RCTResponseSenderBlock,
-        errorCallback: @escaping RCTResponseSenderBlock
-    ) {
-        os_log("disableAutoReconnect called", log: logger, type: .info)
-        autoReconnectEnabled = false
-
-        // Apply immediately to any live client
-        if let client = mqttClient {
-            client.autoReconnect = false
-            os_log("  - Applied autoReconnect=false to live client", log: logger, type: .info)
-        }
-
-        successCallback(["Auto-reconnect disabled"])
-    }
-
-    @objc
-    func isAutoReconnectEnabled(_ callback: @escaping RCTResponseSenderBlock) {
-        callback([autoReconnectEnabled])
-    }
-
     @objc
     func disconnect(_ successCallback: @escaping RCTResponseSenderBlock,
                    errorCallback: @escaping RCTResponseSenderBlock) {
@@ -738,6 +689,7 @@ extension MqttModule: CocoaMQTTDelegate {
         os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
         os_log("", log: logger, type: .info)
         
+        // STEP 1: Verify we have an expected CN to pin against
         os_log("  STEP 1: Checking expected CN...", log: logger, type: .info)
         guard let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty else {
             os_log("  ✗ No expected CN configured", log: logger, type: .error)
@@ -746,6 +698,7 @@ extension MqttModule: CocoaMQTTDelegate {
         }
         os_log("  ✓ Expected CN: %{public}@", log: logger, type: .info, expectedCN)
         
+        // STEP 2: Pull the leaf cert off the trust object
         os_log("  STEP 2: Retrieving server certificate...", log: logger, type: .info)
         guard let serverCert = SecTrustGetCertificateAtIndex(trust, 0) else {
             os_log("  ✗ Cannot retrieve server certificate", log: logger, type: .error)
@@ -758,6 +711,7 @@ extension MqttModule: CocoaMQTTDelegate {
             os_log("    - Server cert subject: %{public}@", log: logger, type: .info, summary)
         }
         
+        // STEP 3: Extract the CN from the server cert
         os_log("  STEP 3: Extracting CN from server certificate...", log: logger, type: .info)
         guard let actualCN = extractCommonName(from: serverCert) else {
             os_log("  ✗ Cannot extract CN from server certificate", log: logger, type: .error)
@@ -766,6 +720,7 @@ extension MqttModule: CocoaMQTTDelegate {
         }
         os_log("  ✓ Actual CN: %{public}@", log: logger, type: .info, actualCN)
         
+        // STEP 4: Pin — compare extracted CN against the known device identifier
         os_log("  STEP 4: Comparing CNs...", log: logger, type: .info)
         os_log("    - Expected: '%{public}@'", log: logger, type: .info, expectedCN)
         os_log("    - Actual:   '%{public}@'", log: logger, type: .info, actualCN)
