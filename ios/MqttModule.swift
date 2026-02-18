@@ -13,6 +13,7 @@ class MqttModule: RCTEventEmitter {
     private var brokerUrl: String = ""
     private var clientIdentifier: String = ""
     private var connectionStartTime: Date?
+    private var isAutoReconnectEnabled: Bool = false
     
     private let logger = OSLog(subsystem: "com.neurio.generachome", category: "MqttModule")
     
@@ -169,11 +170,11 @@ class MqttModule: RCTEventEmitter {
             client.password = ""
             client.keepAlive = 60
             client.cleanSession = true
-            client.autoReconnect = true
+            client.autoReconnect = isAutoReconnectEnabled
             
             os_log("  - keepAlive: 60 seconds", log: logger, type: .info)
             os_log("  - cleanSession: true", log: logger, type: .info)
-            os_log("  - autoReconnect: true", log: logger, type: .info)
+            os_log("  - autoReconnect: false", log: logger, type: .info)
             os_log("✓ Client configured", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
