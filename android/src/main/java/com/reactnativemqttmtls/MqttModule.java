@@ -375,20 +375,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 public void connectionLost(Throwable cause) {
                     String errorMsg = cause != null ? cause.getMessage() : "Unknown";
                     Log.w(TAG, "MQTT connection lost: " + errorMsg);
-
-                    if (!autoReconnectEnabled) {
-                        Log.d(TAG, "  - autoReconnect disabled, closing client to stop reconnect scheduler");
-                        try {
-                            if (client != null) {
-                                client.close();
-                                client = null;
-                                connectOptions = null;
-                            }
-                        } catch (Exception e) {
-                            Log.w(TAG, "  - Error closing client after intentional disconnect: " + e.getMessage());
-                        }
-                    }
-
                     sendEvent("MqttDisconnected", "Connection lost: " + errorMsg);
                 }
 
@@ -420,15 +406,10 @@ public class MqttModule extends ReactContextBaseJavaModule {
             });
 
             client.connect(connectOptions, null, new IMqttActionListener() {
-                // React Native callbacks are single-use — guard against the library
-                // invoking onFailure multiple times during reconnect attempts
-                private final boolean[] callbackInvoked = {false};
-
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
                     Log.i(TAG, "MQTT CONNECTION SUCCESSFUL");
-                    if (success != null && !callbackInvoked[0]) {
-                        callbackInvoked[0] = true;
+                    if (success != null) {
                         try {
                             success.invoke("Connected");
                         } catch (Exception e) {
@@ -451,8 +432,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                         Log.e(TAG, "MQTT CONNECTION FAILED: Unknown error");
                     }
                     
-                    if (error != null && !callbackInvoked[0]) {
-                        callbackInvoked[0] = true;
+                    if (error != null) {
                         try {
                             error.invoke(errorMessage);
                         } catch (Exception e) {
