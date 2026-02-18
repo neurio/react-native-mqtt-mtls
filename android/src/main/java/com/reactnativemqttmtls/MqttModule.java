@@ -376,14 +376,22 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     String errorMsg = cause != null ? cause.getMessage() : "Unknown";
                     Log.w(TAG, "MQTT connection lost: " + errorMsg);
 
-                    // If autoReconnect is disabled, tell the client to stop trying to reconnect
-                    if (!autoReconnectEnabled && client != null) {
-                        Log.d(TAG, "  - autoReconnect disabled, disabling client's automatic reconnect");
+                    if (!autoReconnectEnabled) {
+                        Log.d(TAG, "  - autoReconnect disabled, cleaning up client to stop reconnect scheduler");
                         try {
-                            // This prevents the library's internal reconnect scheduler from firing
-                            client.setAutomaticReconnect(false);
+                            if (client != null) {
+                                // Unregister callback first to prevent it from being called during cleanup
+                                client.setCallback(null);
+
+                                // Force close to stop the reconnect scheduler
+                                client.close();
+
+                                // Null out references
+                                client = null;
+                                connectOptions = null;
+                            }
                         } catch (Exception e) {
-                            Log.w(TAG, "  - Error disabling automatic reconnect: " + e.getMessage());
+                            Log.w(TAG, "  - Error during cleanup: " + e.getMessage());
                         }
                     }
 
