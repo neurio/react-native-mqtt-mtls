@@ -25,6 +25,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
     private static final String SOFTWARE_KEYSTORE_FILE = "software_keys.p12";
     private final ReactApplicationContext reactContext;
     private MqttAndroidClient client;
+    private volatile boolean isAutoReconnectEnabled = false;
 
     public MqttModule(ReactApplicationContext reactContext) {
         super(reactContext);
@@ -347,7 +348,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             options.setCleanSession(true);
             options.setConnectionTimeout(30);
             options.setKeepAliveInterval(60);
-            options.setAutomaticReconnect(true);
+            options.setAutomaticReconnect(isAutoReconnectEnabled);
 
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
