@@ -25,10 +25,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
     private static final String SOFTWARE_KEYSTORE_FILE = "software_keys.p12";
     private final ReactApplicationContext reactContext;
     private MqttAndroidClient client;
-    private MqttConnectOptions connectOptions;
-
-    // Control auto-reconnect behavior
-    private volatile boolean autoReconnectEnabled = true;
 
     public MqttModule(ReactApplicationContext reactContext) {
         super(reactContext);
@@ -75,7 +71,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 Log.w(TAG, "  - Error during cleanup (non-critical): " + e.getMessage());
             } finally {
                 client = null;
-                connectOptions = null;
                 Log.d(TAG, "✓ Cleanup complete");
             }
         } else {
@@ -348,12 +343,11 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     brokerUrl,
                     clientId);
 
-            connectOptions = new MqttConnectOptions();
-            connectOptions.setCleanSession(true);
-            connectOptions.setConnectionTimeout(30);
-            connectOptions.setKeepAliveInterval(60);
-            connectOptions.setAutomaticReconnect(autoReconnectEnabled);
-            Log.d(TAG, "AutoReconnect: " + autoReconnectEnabled);
+            MqttConnectOptions options = new MqttConnectOptions();
+            options.setCleanSession(true);
+            options.setConnectionTimeout(30);
+            options.setKeepAliveInterval(60);
+            options.setAutomaticReconnect(true);
 
             SSLContext sslContext = createSSLContextFromKeystore(
                     certificates.getString("clientCert"),
@@ -362,7 +356,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     useHardwareKey,
                     brokerCommonName);
 
-            connectOptions.setSocketFactory(sslContext.getSocketFactory());
+            options.setSocketFactory(sslContext.getSocketFactory());
 
             client.setCallback(new MqttCallbackExtended() {
                 @Override
@@ -405,7 +399,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 }
             });
 
-            client.connect(connectOptions, null, new IMqttActionListener() {
+            client.connect(options, null, new IMqttActionListener() {
                 @Override
                 public void onSuccess(IMqttToken asyncActionToken) {
                     Log.i(TAG, "MQTT CONNECTION SUCCESSFUL");
@@ -693,49 +687,6 @@ public class MqttModule extends ReactContextBaseJavaModule {
             if (errorCallback != null) {
                 errorCallback.invoke("Publish failed: " + e.getMessage());
             }
-        }
-    }
-
-    // ============================================================================
-    // AUTO-RECONNECT CONTROL METHODS
-    // ============================================================================
-
-    @ReactMethod
-    public void enableAutoReconnect(Callback successCallback, Callback errorCallback) {
-        Log.d(TAG, "enableAutoReconnect called");
-        autoReconnectEnabled = true;
-
-        // Apply immediately to live connectOptions if available
-        if (connectOptions != null) {
-            connectOptions.setAutomaticReconnect(true);
-            Log.d(TAG, "  - Applied autoReconnect=true to connectOptions");
-        }
-
-        if (successCallback != null) {
-            successCallback.invoke("Auto-reconnect enabled");
-        }
-    }
-
-    @ReactMethod
-    public void disableAutoReconnect(Callback successCallback, Callback errorCallback) {
-        Log.d(TAG, "disableAutoReconnect called");
-        autoReconnectEnabled = false;
-
-        // Apply immediately to live connectOptions if available
-        if (connectOptions != null) {
-            connectOptions.setAutomaticReconnect(false);
-            Log.d(TAG, "  - Applied autoReconnect=false to connectOptions");
-        }
-
-        if (successCallback != null) {
-            successCallback.invoke("Auto-reconnect disabled");
-        }
-    }
-
-    @ReactMethod
-    public void isAutoReconnectEnabled(Callback callback) {
-        if (callback != null) {
-            callback.invoke(autoReconnectEnabled);
         }
     }
 

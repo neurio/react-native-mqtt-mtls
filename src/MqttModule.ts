@@ -50,18 +50,6 @@ interface MqttModuleType {
   ): void;
 
   isConnected(callback: (isConnected: boolean) => void): void;
-
-  enableAutoReconnect(
-    successCallback: (message: string) => void,
-    errorCallback: (error: string) => void
-  ): void;
-
-  disableAutoReconnect(
-    successCallback: (message: string) => void,
-    errorCallback: (error: string) => void
-  ): void;
-
-  isAutoReconnectEnabled(callback: (isEnabled: boolean) => void): void;
 }
 
 const { MqttModule } = NativeModules;

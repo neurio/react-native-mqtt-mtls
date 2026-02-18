@@ -6,7 +6,6 @@ import MqttModule from './MqttModule';
 export const MqttProvider = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
-  const [autoReconnect, setAutoReconnectState] = useState(true);
   const configRef = useRef(null);
   const eventEmitterRef = useRef(null);
 
@@ -122,47 +121,25 @@ export const MqttProvider = ({ children }) => {
   const connect = useCallback(async (config) => {
     try {
       configRef.current = config;
-
-      // Apply the autoReconnect preference from config before connecting.
-      // Defaults to true if not specified, matching the native default.
-      const shouldAutoReconnect = config.autoReconnect !== false;
-      const applyReconnect = shouldAutoReconnect
-        ? MqttModule.enableAutoReconnect
-        : MqttModule.disableAutoReconnect;
-
       return new Promise((resolve, reject) => {
-        const doConnect = () => {
-          MqttModule.connect(
-            config.broker,
-            config.clientId,
-            config.certificates,
-            config.sniHostname,
-            config.brokerIp,
-            config.brokerCommonName,
-            (success) => {
-              console.log('Connect success:', success);
-              resolve(success);
-            },
-            (error) => {
-              console.error('Connect error:', error);
-              setError(error);
-              if (config.onError) {
-                config.onError(error);
-              }
-              reject(error);
-            }
-          );
-        };
-
-        applyReconnect(
-          () => {
-            setAutoReconnectState(shouldAutoReconnect);
-            doConnect();
+        MqttModule.connect(
+          config.broker,
+          config.clientId,
+          config.certificates,
+          config.sniHostname,
+          config.brokerIp,
+          config.brokerCommonName,
+          (success) => {
+            console.log('Connect success:', success);
+            resolve(success);
           },
-          (err) => {
-            // Non-fatal: log and still attempt connection
-            console.warn('autoReconnect apply before connect failed (non-fatal):', err);
-            doConnect();
+          (error) => {
+            console.error('Connect error:', error);
+            setError(error);
+            if (config.onError) {
+              config.onError(error);
+            }
+            reject(error);
           }
         );
       });
@@ -274,61 +251,14 @@ export const MqttProvider = ({ children }) => {
     });
   }, []);
 
-  const enableAutoReconnect = useCallback(async () => {
-    return new Promise<string>((resolve, reject) => {
-      MqttModule.enableAutoReconnect(
-        (success) => {
-          console.log('enableAutoReconnect success:', success);
-          setAutoReconnectState(true);
-          resolve(success);
-        },
-        (error) => {
-          console.error('enableAutoReconnect error:', error);
-          reject(error);
-        }
-      );
-    });
-  }, []);
-
-  const disableAutoReconnect = useCallback(async () => {
-    return new Promise<string>((resolve, reject) => {
-      MqttModule.disableAutoReconnect(
-        (success) => {
-          console.log('disableAutoReconnect success:', success);
-          setAutoReconnectState(false);
-          resolve(success);
-        },
-        (error) => {
-          console.error('disableAutoReconnect error:', error);
-          reject(error);
-        }
-      );
-    });
-  }, []);
-
-  const isAutoReconnectEnabled = useCallback(async () => {
-    return new Promise<boolean>((resolve, reject) => {
-      MqttModule.isAutoReconnectEnabled(
-        (isEnabled) => {
-          console.log('isAutoReconnectEnabled:', isEnabled);
-          resolve(isEnabled);
-        }
-      );
-    });
-  }, []);
-
   const value = {
     isConnected,
-    autoReconnect,
     error,
     connect,
     disconnect,
     subscribe,
     unsubscribe,
     publish,
-    enableAutoReconnect,
-    disableAutoReconnect,
-    isAutoReconnectEnabled,
   };
 
   return <MqttContext.Provider value={value}>{children}</MqttContext.Provider>;
