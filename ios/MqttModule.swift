@@ -66,7 +66,6 @@ class MqttModule: RCTEventEmitter {
         os_log("✓ Cleanup complete", log: logger, type: .info)
     }
     
-    // ── Fixed: signature now matches the bridge (two callbacks) ──────────────
     @objc
     func cleanup(
         _ successCallback: @escaping RCTResponseSenderBlock,
@@ -897,12 +896,7 @@ extension MqttModule: CocoaMQTTDelegate {
         
         os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
         os_log("", log: logger, type: .info)
-
-        if !autoReconnectEnabled {
-            os_log("  - autoReconnect disabled, nulling client to stop reconnect timer", log: logger, type: .info)
-            mqttClient = nil
-        }
-
+        
         self.sendEvent(withName: "MqttDisconnected", body: errorMsg)
         
         if let errorCallback = connectErrorCallback {
