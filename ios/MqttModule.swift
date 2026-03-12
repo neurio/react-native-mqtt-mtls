@@ -85,6 +85,7 @@ class MqttModule: RCTEventEmitter {
         sniHostname: String?,
         brokerIp: String?,
         brokerCommonName: String?,
+        isAdminUser: Bool,
         successCallback: @escaping RCTResponseSenderBlock,
         errorCallback: @escaping RCTResponseSenderBlock
     ) {
@@ -103,10 +104,16 @@ class MqttModule: RCTEventEmitter {
         os_log("Timestamp: %{public}@", log: logger, type: .info, ISO8601DateFormatter().string(from: Date()))
         os_log("Broker URL: %{public}@", log: logger, type: .info, broker)
         os_log("Client ID: %{public}@", log: logger, type: .info, clientId)
-        os_log("SNI Hostname: %{public}@", log: logger, type: .info, sniHostname ?? "nil")
+        os_log("Admin user: %{public}@", log: logger, type: .info, String(isAdminUser))
+        os_log("SNI Hostname: %{public}@", log: logger, type: .info, isAdminUser ? "N/A (admin)" : (sniHostname ?? "nil"))
         os_log("Broker IP: %{public}@", log: logger, type: .info, brokerIp ?? "nil")
-        os_log("Expected Broker CN: %{public}@", log: logger, type: .info, brokerCommonName ?? "nil")
+        os_log("Expected Broker CN: %{public}@", log: logger, type: .info, isAdminUser ? "N/A (admin)" : (brokerCommonName ?? "nil"))
         os_log("", log: logger, type: .info)
+        
+        // Admin users have access to multiple brokers — sniHostname and brokerCommonName
+        // are per-inverter fields and are ignored when isAdminUser = true
+        let effectiveSniHostname = isAdminUser ? nil : sniHostname
+        let effectiveBrokerCN = isAdminUser ? nil : brokerCommonName
         
         do {
             os_log("STEP 1: Validating parameters...", log: logger, type: .info)
@@ -133,14 +140,11 @@ class MqttModule: RCTEventEmitter {
             os_log("✓ All required parameters present", log: logger, type: .info)
             os_log("", log: logger, type: .info)
             
-            guard let expectedCN = brokerCommonName, !expectedCN.isEmpty else {
-                let error = "Security error: brokerCommonName is required for CN validation"
-                os_log("ERROR: %{public}@", log: logger, type: .error, error)
-                errorCallback([error])
-                return
+            if let cn = effectiveBrokerCN, !cn.isEmpty {
+                os_log("✓ Broker CN validation enabled: %{public}@", log: logger, type: .info, cn)
+            } else {
+                os_log("Broker CN validation skipped (admin user)", log: logger, type: .info)
             }
-            
-            os_log("✓ Broker CN validation enabled: %{public}@", log: logger, type: .info, expectedCN)
             os_log("", log: logger, type: .info)
             
             os_log("STEP 2: Parsing broker URL...", log: logger, type: .info)
@@ -196,7 +200,7 @@ class MqttModule: RCTEventEmitter {
                     }
                 }
                 
-                self.expectedBrokerCN = expectedCN
+                self.expectedBrokerCN = effectiveBrokerCN  // nil for admin — CN validation skipped
                 os_log("  ✓ CA certificates validated", log: logger, type: .info)
                 os_log("", log: logger, type: .info)
                 
@@ -208,7 +212,7 @@ class MqttModule: RCTEventEmitter {
                     privateKeyAlias: keyAlias,
                     clientCertPem: clientCert,
                     rootCaPem: rootCa,
-                    sniHostname: sniHostname,
+                    sniHostname: effectiveSniHostname,  // nil for admin
                     useHardwareKey: useHardwareKey
                 )
                 
@@ -690,11 +694,17 @@ extension MqttModule: CocoaMQTTDelegate {
         os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
         os_log("", log: logger, type: .info)
         
-        // STEP 1: Verify we have an expected CN to pin against
+        // STEP 1: Check if CN validation is required
         os_log("  STEP 1: Checking expected CN...", log: logger, type: .info)
         guard let expectedCN = self.expectedBrokerCN, !expectedCN.isEmpty else {
-            os_log("  ✗ No expected CN configured", log: logger, type: .error)
-            completionHandler(false)
+            // Admin user — no CN pinning required, allow the connection
+            os_log("  - No expected CN configured (admin user) — skipping CN validation", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            os_log("╔═══════════════════════════════════════════════════════╗", log: logger, type: .info)
+            os_log("║ TLS VALIDATION: SUCCESS ✓ (admin, CN check skipped) ║", log: logger, type: .info)
+            os_log("╚═══════════════════════════════════════════════════════╝", log: logger, type: .info)
+            os_log("", log: logger, type: .info)
+            completionHandler(true)
             return
         }
         os_log("  ✓ Expected CN: %{public}@", log: logger, type: .info, expectedCN)

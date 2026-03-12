@@ -9,6 +9,7 @@ RCT_EXTERN_METHOD(connect:(NSString *)broker
                   sniHostname:(NSString *)sniHostname
                   brokerIp:(NSString *)brokerIp
                   brokerCommonName:(NSString *)brokerCommonName
+                  isAdminUser:(BOOL)isAdminUser
                   successCallback:(RCTResponseSenderBlock)successCallback
                   errorCallback:(RCTResponseSenderBlock)errorCallback)
 

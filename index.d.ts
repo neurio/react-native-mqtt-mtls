@@ -18,6 +18,7 @@ declare module 'react-native-mqtt-mtls' {
   export interface MqttConfig {
     broker: string;
     clientId: string;
+    isAdminUser?: boolean;
     sniHostname?: string;
     brokerIp?: string;
     brokerCommonName?: string;
@@ -49,7 +50,7 @@ declare module 'react-native-mqtt-mtls' {
   /**
    * Native MQTT Module interface
    * Parameter order matches iOS/Android native implementations:
-   * broker, clientId, certificates, sniHostname, brokerIp, successCallback, errorCallback
+   * broker, clientId, certificates, sniHostname, brokerIp, brokerCommonName, isAdminUser, successCallback, errorCallback
    */
   export interface MqttModuleType {
     connect(
@@ -59,6 +60,7 @@ declare module 'react-native-mqtt-mtls' {
       sniHostname: string | null,
       brokerIp: string | null,
       brokerCommonName: string | null,
+      isAdminUser: boolean,
       successCallback: (message: string) => void,
       errorCallback: (error: string) => void
     ): void;

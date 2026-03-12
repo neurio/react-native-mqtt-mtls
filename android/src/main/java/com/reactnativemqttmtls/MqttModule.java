@@ -31,7 +31,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
         super(reactContext);
         this.reactContext = reactContext;
         setupBouncyCastle();
-        
+
         // Clean up any stale connections from previous app instances
         Log.d(TAG, "MqttModule initialized - performing initial cleanup");
         cleanupConnection();
@@ -52,20 +52,18 @@ public class MqttModule extends ReactContextBaseJavaModule {
      */
     private void cleanupConnection() {
         Log.d(TAG, "Cleaning up MQTT connection state...");
-        
+
         if (client != null) {
             try {
-                // Disable auto-reconnect to prevent reconnection attempts
                 if (client.isConnected()) {
                     Log.d(TAG, "  - Client is connected, disconnecting...");
                     try {
-                        client.disconnect(0); // Immediate disconnect with 0ms timeout
+                        client.disconnect(0);
                     } catch (Exception e) {
                         Log.w(TAG, "  - Disconnect error (non-critical): " + e.getMessage());
                     }
                 }
-                
-                // Close the client to release resources
+
                 Log.d(TAG, "  - Closing client...");
                 client.close();
             } catch (Exception e) {
@@ -88,13 +86,13 @@ public class MqttModule extends ReactContextBaseJavaModule {
     // ============================================================================
     // CLEANUP METHOD (exposed to React Native)
     // ============================================================================
-    
+
     @ReactMethod
     public void cleanup(Callback successCallback, Callback errorCallback) {
         Log.d(TAG, "═══════════════════════════════════════");
         Log.d(TAG, "EXPLICIT CLEANUP REQUESTED");
         Log.d(TAG, "═══════════════════════════════════════");
-        
+
         try {
             cleanupConnection();
             if (successCallback != null) {
@@ -109,19 +107,19 @@ public class MqttModule extends ReactContextBaseJavaModule {
     }
 
     // ============================================================================
-    // CUSTOM TRUSTMANAGER - Server certificate validation with CN check
+    // CUSTOM TRUSTMANAGER - Server certificate validation with optional CN check
     // ============================================================================
-    
+
     private static class CustomTrustManager implements X509TrustManager {
         private final X509Certificate[] acceptedIssuers;
         private final String expectedBrokerCN;
-        
+
         public CustomTrustManager(KeyStore trustStore, String expectedBrokerCN) throws Exception {
             this.expectedBrokerCN = expectedBrokerCN;
-            
+
             List<X509Certificate> certs = new ArrayList<>();
             Enumeration<String> aliases = trustStore.aliases();
-            
+
             while (aliases.hasMoreElements()) {
                 String alias = aliases.nextElement();
                 java.security.cert.Certificate cert = trustStore.getCertificate(alias);
@@ -129,43 +127,45 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     certs.add((X509Certificate) cert);
                 }
             }
-            
+
             this.acceptedIssuers = certs.toArray(new X509Certificate[0]);
             Log.d(TAG, "CustomTrustManager initialized with " + acceptedIssuers.length + " CA(s)");
+
             if (expectedBrokerCN != null && !expectedBrokerCN.isEmpty()) {
                 Log.d(TAG, "Expected broker CN: " + expectedBrokerCN);
+            } else {
+                Log.d(TAG, "Broker CN validation skipped (admin user)");
             }
         }
-        
+
         @Override
         public void checkClientTrusted(X509Certificate[] chain, String authType) {
             // Not needed for client
         }
-        
+
         @Override
         public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
             if (chain == null || chain.length == 0) {
                 throw new CertificateException("Server certificate chain is empty");
             }
-            
+
             X509Certificate serverCert = chain[0];
-            
-            // Validate broker certificate CN matches expected value
+
+            // CN validation only for non-admin users (expectedBrokerCN will be null for admin)
             if (expectedBrokerCN != null && !expectedBrokerCN.isEmpty()) {
                 String brokerCN = extractCN(serverCert);
                 Log.d(TAG, "Broker certificate CN: " + brokerCN);
-                
+
                 if (!expectedBrokerCN.equals(brokerCN)) {
                     Log.e(TAG, "CN MISMATCH! Expected: " + expectedBrokerCN + ", Got: " + brokerCN);
                     throw new CertificateException(
-                        "Broker CN mismatch. Expected: " + expectedBrokerCN + ", Got: " + brokerCN
-                    );
+                            "Broker CN mismatch. Expected: " + expectedBrokerCN + ", Got: " + brokerCN);
                 }
                 Log.d(TAG, "✓ Broker CN validated: " + brokerCN);
             }
-            
+
             boolean validated = false;
-            
+
             // Try direct validation (server cert signed by one of our CAs)
             for (X509Certificate ca : acceptedIssuers) {
                 try {
@@ -177,7 +177,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     // Try next CA
                 }
             }
-            
+
             // Try validation via intermediate certificates
             if (!validated && chain.length > 1) {
                 for (int i = 1; i < chain.length; i++) {
@@ -196,7 +196,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     if (validated) break;
                 }
             }
-            
+
             // Check if intermediate IS a trusted CA
             if (!validated && chain.length > 1) {
                 for (int i = 1; i < chain.length; i++) {
@@ -206,7 +206,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                             try {
                                 byte[] intermediatePubKey = intermediate.getPublicKey().getEncoded();
                                 byte[] caPubKey = ca.getPublicKey().getEncoded();
-                                
+
                                 if (Arrays.equals(intermediatePubKey, caPubKey)) {
                                     serverCert.verify(intermediate.getPublicKey());
                                     validated = true;
@@ -221,17 +221,16 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     if (validated) break;
                 }
             }
-            
+
             if (!validated) {
                 Log.e(TAG, "Server certificate validation failed - not trusted by any CA");
                 throw new CertificateException("Server certificate not trusted by any configured CA");
             }
         }
-        
+
         private String extractCN(X509Certificate cert) {
             try {
                 String dn = cert.getSubjectX500Principal().getName();
-                // Parse DN to extract CN
                 for (String part : dn.split(",")) {
                     String trimmed = part.trim();
                     if (trimmed.startsWith("CN=")) {
@@ -243,7 +242,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             }
             return null;
         }
-        
+
         @Override
         public X509Certificate[] getAcceptedIssuers() {
             return acceptedIssuers;
@@ -253,44 +252,44 @@ public class MqttModule extends ReactContextBaseJavaModule {
     // ============================================================================
     // CUSTOM KEYMANAGER - Client certificate presentation
     // ============================================================================
-    
+
     private static class CustomKeyManager extends X509ExtendedKeyManager {
         private final String alias;
         private final X509Certificate[] certChain;
         private final PrivateKey privateKey;
-        
+
         public CustomKeyManager(String alias, X509Certificate[] certChain, PrivateKey privateKey) {
             this.alias = alias;
             this.certChain = certChain;
             this.privateKey = privateKey;
             Log.d(TAG, "CustomKeyManager initialized (alias: " + alias + ", chain: " + certChain.length + " certs)");
         }
-        
+
         @Override
         public String chooseClientAlias(String[] keyType, Principal[] issuers, Socket socket) {
             return alias;
         }
-        
+
         @Override
         public String chooseServerAlias(String keyType, Principal[] issuers, Socket socket) {
             return null;
         }
-        
+
         @Override
         public X509Certificate[] getCertificateChain(String alias) {
             return this.alias.equals(alias) ? certChain : null;
         }
-        
+
         @Override
         public String[] getClientAliases(String keyType, Principal[] issuers) {
             return new String[] { alias };
         }
-        
+
         @Override
         public String[] getServerAliases(String keyType, Principal[] issuers) {
             return null;
         }
-        
+
         @Override
         public PrivateKey getPrivateKey(String alias) {
             return this.alias.equals(alias) ? privateKey : null;
@@ -300,7 +299,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
     // ============================================================================
     // MAIN CONNECT METHOD
     // ============================================================================
-    
+
     @ReactMethod
     public void connect(
             String brokerUrl,
@@ -309,6 +308,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             String sniHost,
             String brokerIp,
             String brokerCommonName,
+            boolean isAdminUser,
             final Callback success,
             final Callback error) {
         try {
@@ -317,26 +317,32 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 Log.w(TAG, "Found existing client, cleaning up before new connection...");
                 cleanupConnection();
             }
-            
+
             String privateKeyAlias = certificates.hasKey("privateKeyAlias")
                     ? certificates.getString("privateKeyAlias")
                     : null;
-            
-            // Default to SOFTWARE keys (hardware keys don't work reliably for TLS)
-            boolean useHardwareKey = certificates.hasKey("useHardwareKey") 
-                    ? certificates.getBoolean("useHardwareKey") 
+
+            boolean useHardwareKey = certificates.hasKey("useHardwareKey")
+                    ? certificates.getBoolean("useHardwareKey")
                     : false;
 
             if (privateKeyAlias == null || privateKeyAlias.isEmpty()) {
                 throw new IllegalArgumentException("privateKeyAlias required");
             }
 
+            // Admin users can connect to the entire fleet of brokers — sniHost and brokerCommonName
+            // are per-inverter fields and are ignored when isAdminUser = true
+            String effectiveSniHost = isAdminUser ? null : sniHost;
+            String effectiveBrokerCN = isAdminUser ? null : brokerCommonName;
+
             Log.i(TAG, "═══════════════════════════════════════");
             Log.i(TAG, "MQTT CONNECTION ATTEMPT STARTED");
             Log.i(TAG, "═══════════════════════════════════════");
             Log.i(TAG, "Broker: " + brokerUrl);
             Log.i(TAG, "Client ID: " + clientId);
-            Log.i(TAG, "Expected broker CN: " + brokerCommonName);
+            Log.i(TAG, "Admin user: " + isAdminUser);
+            Log.i(TAG, "SNI host: " + (effectiveSniHost != null ? effectiveSniHost : "N/A (admin)"));
+            Log.i(TAG, "Expected broker CN: " + (effectiveBrokerCN != null ? effectiveBrokerCN : "N/A (admin)"));
             Log.i(TAG, "Key: " + privateKeyAlias + " (" + (useHardwareKey ? "hardware" : "software") + ")");
 
             client = new MqttAndroidClient(
@@ -355,7 +361,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     certificates.getString("rootCa"),
                     privateKeyAlias,
                     useHardwareKey,
-                    brokerCommonName);
+                    effectiveBrokerCN);  // null for admin — skips CN validation
 
             options.setSocketFactory(sslContext.getSocketFactory());
 
@@ -377,18 +383,17 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 public void messageArrived(String topic, MqttMessage message) {
                     try {
                         String payloadBase64 = android.util.Base64.encodeToString(
-                            message.getPayload(), 
-                            android.util.Base64.NO_WRAP
-                        );
-                        
+                                message.getPayload(),
+                                android.util.Base64.NO_WRAP);
+
                         WritableMap eventData = Arguments.createMap();
                         eventData.putString("topic", topic);
                         eventData.putString("message", payloadBase64);
                         eventData.putBoolean("isBinary", true);
-                        
+
                         reactContext
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit("MqttMessage", eventData);
+                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                                .emit("MqttMessage", eventData);
                     } catch (Exception e) {
                         Log.e(TAG, "Failed to process MQTT message on topic " + topic, e);
                     }
@@ -416,7 +421,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                 @Override
                 public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
                     String errorMessage = "Connection failed";
-                    
+
                     if (exception != null) {
                         errorMessage = exception.getMessage();
                         if (errorMessage == null || errorMessage.isEmpty()) {
@@ -426,7 +431,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     } else {
                         Log.e(TAG, "MQTT CONNECTION FAILED: Unknown error");
                     }
-                    
+
                     if (error != null) {
                         try {
                             error.invoke(errorMessage);
@@ -452,14 +457,14 @@ public class MqttModule extends ReactContextBaseJavaModule {
     // ============================================================================
     // SSL CONTEXT CREATION
     // ============================================================================
-    
+
     private SSLContext createSSLContextFromKeystore(
             String clientPem,
             String rootPem,
             String privateKeyAlias,
             boolean useHardwareKey,
             String expectedBrokerCN) throws Exception {
-        
+
         Log.d(TAG, "Creating SSL context (" + (useHardwareKey ? "hardware" : "software") + " key)");
 
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
@@ -486,51 +491,50 @@ public class MqttModule extends ReactContextBaseJavaModule {
         // Load private key
         PrivateKey privateKey;
         PublicKey publicKey;
-        
+
         if (useHardwareKey) {
             KeyStore androidKeyStore = KeyStore.getInstance("AndroidKeyStore");
             androidKeyStore.load(null);
-            
+
             if (!androidKeyStore.containsAlias(privateKeyAlias)) {
                 throw new KeyException("Hardware key not found: " + privateKeyAlias);
             }
-            
+
             KeyStore.Entry entry = androidKeyStore.getEntry(privateKeyAlias, null);
             if (!(entry instanceof KeyStore.PrivateKeyEntry)) {
                 throw new KeyException("Not a private key entry");
             }
-            
+
             KeyStore.PrivateKeyEntry privateKeyEntry = (KeyStore.PrivateKeyEntry) entry;
             privateKey = privateKeyEntry.getPrivateKey();
             publicKey = privateKeyEntry.getCertificate().getPublicKey();
-            
+
             Log.d(TAG, "Loaded hardware-backed key");
-            
+
         } else {
             String keystorePath = getReactApplicationContext().getFilesDir() + "/" + SOFTWARE_KEYSTORE_FILE;
             FileInputStream fis = new FileInputStream(keystorePath);
-            
+
             KeyStore softwareKeyStore = KeyStore.getInstance("PKCS12");
             softwareKeyStore.load(fis, "".toCharArray());
             fis.close();
-            
+
             if (!softwareKeyStore.containsAlias(privateKeyAlias)) {
                 throw new KeyException("Software key not found: " + privateKeyAlias);
             }
-            
+
             KeyStore.Entry entry = softwareKeyStore.getEntry(
-                privateKeyAlias, 
-                new KeyStore.PasswordProtection("".toCharArray())
-            );
-            
+                    privateKeyAlias,
+                    new KeyStore.PasswordProtection("".toCharArray()));
+
             if (!(entry instanceof KeyStore.PrivateKeyEntry)) {
                 throw new KeyException("Not a private key entry");
             }
-            
+
             KeyStore.PrivateKeyEntry privateKeyEntry = (KeyStore.PrivateKeyEntry) entry;
             privateKey = privateKeyEntry.getPrivateKey();
             publicKey = privateKeyEntry.getCertificate().getPublicKey();
-            
+
             Log.d(TAG, "Loaded software key");
         }
 
@@ -539,10 +543,12 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
         // Setup KeyManager
         KeyManager[] keyManagers = new KeyManager[] {
-            new CustomKeyManager(privateKeyAlias, certChain, privateKey)
+                new CustomKeyManager(privateKeyAlias, certChain, privateKey)
         };
 
-        // Setup TrustManager with expected broker CN
+        // Setup TrustManager
+        // expectedBrokerCN is null for admin users — CN validation is skipped,
+        // but certificate chain validation still runs for security
         KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
         trustStore.load(null, null);
         int i = 0;
@@ -551,7 +557,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
         }
 
         TrustManager[] trustManagers = new TrustManager[] {
-            new CustomTrustManager(trustStore, expectedBrokerCN)
+                new CustomTrustManager(trustStore, expectedBrokerCN)
         };
 
         // Create SSL context with TLS 1.3
@@ -574,7 +580,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
     // ============================================================================
     // MQTT OPERATIONS
     // ============================================================================
-    
+
     @ReactMethod
     public void subscribe(String topic, int qos, Callback successCallback, Callback errorCallback) {
         try {
@@ -645,19 +651,16 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void publish(String topic, String message, int qos, boolean retained,
-                        Callback successCallback, Callback errorCallback) {
+            Callback successCallback, Callback errorCallback) {
         try {
             if (client == null || !client.isConnected()) {
                 throw new MqttException(MqttException.REASON_CODE_CLIENT_NOT_CONNECTED);
             }
 
-            // Decode Base64 if it's binary data
             byte[] payload;
             try {
-                // Try to decode as Base64 (for binary protobuf messages)
                 payload = android.util.Base64.decode(message, android.util.Base64.NO_WRAP);
             } catch (IllegalArgumentException e) {
-                // Not Base64, treat as plain string
                 payload = message.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             }
 
@@ -696,7 +699,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
         Log.d(TAG, "───────────────────────────────────────");
         Log.d(TAG, "DISCONNECT REQUESTED");
         Log.d(TAG, "───────────────────────────────────────");
-        
+
         try {
             if (client == null) {
                 Log.d(TAG, "No active MQTT client to disconnect");
@@ -730,8 +733,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                     public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
                         String errorMsg = exception != null ? exception.getMessage() : "Disconnect failed";
                         Log.e(TAG, "Disconnect failed: " + errorMsg);
-                        
-                        // Try to close anyway
+
                         try {
                             if (client != null) {
                                 client.close();
@@ -740,7 +742,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
                         } catch (Exception e) {
                             Log.e(TAG, "Error force-closing client", e);
                         }
-                        
+
                         if (errorCallback != null) {
                             errorCallback.invoke("Disconnect failed: " + errorMsg);
                         }
@@ -761,8 +763,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
 
         } catch (Exception e) {
             Log.e(TAG, "Disconnect error", e);
-            
-            // Try to cleanup
+
             try {
                 if (client != null) {
                     client.close();
@@ -771,7 +772,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
             } catch (Exception cleanupException) {
                 Log.e(TAG, "Cleanup error", cleanupException);
             }
-            
+
             if (errorCallback != null) {
                 errorCallback.invoke("Disconnect failed: " + e.getMessage());
             }
@@ -789,7 +790,7 @@ public class MqttModule extends ReactContextBaseJavaModule {
     // ============================================================================
     // DIAGNOSTIC METHODS
     // ============================================================================
-    
+
     @ReactMethod
     public void diagnoseKeyPurposes(String privateKeyAlias, Callback callback) {
         try {
