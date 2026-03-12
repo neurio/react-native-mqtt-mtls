@@ -3,7 +3,7 @@ import type { MqttCertificates } from './types';
 
 /**
  * Native module interface - parameter order must match iOS/Android native implementations
- * Order: broker, clientId, certificates, sniHostname, brokerIp, brokerCommonName, successCallback, errorCallback
+ * Order: broker, clientId, certificates, sniHostname, brokerIp, brokerCommonName, isAdminUser, successCallback, errorCallback
  */
 interface MqttModuleType {
   connect(
@@ -13,6 +13,7 @@ interface MqttModuleType {
     sniHostname: string | null,
     brokerIp: string | null,
     brokerCommonName: string | null,
+    isAdminUser: boolean,
     successCallback: (message: string) => void,
     errorCallback: (error: string) => void
   ): void;

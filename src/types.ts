@@ -15,6 +15,7 @@ export interface MqttCertificates {
 export interface MqttConfig {
   broker: string;
   clientId: string;
+  isAdminUser?: boolean;
   sniHostname?: string;
   brokerIp?: string;
   brokerCommonName?: string;
