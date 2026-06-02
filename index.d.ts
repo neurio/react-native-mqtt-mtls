@@ -1,5 +1,5 @@
-declare module 'react-native-mqtt-mtls' {
-  import { ReactNode } from 'react';
+declare module "react-native-mqtt-mtls" {
+  import { ReactNode } from "react";
 
   export interface MqttMessage {
     topic: string;
@@ -37,7 +37,12 @@ declare module 'react-native-mqtt-mtls' {
     disconnect: () => Promise<void>;
     subscribe: (topic: string, qos?: number) => Promise<void>;
     unsubscribe: (topic: string) => Promise<void>;
-    publish: (topic: string, message: string, qos?: number, retained?: boolean) => Promise<void>;
+    publish: (
+      topic: string,
+      message: string,
+      qos?: number,
+      retained?: boolean,
+    ) => Promise<void>;
   }
 
   export interface MqttProviderProps {
@@ -46,6 +51,25 @@ declare module 'react-native-mqtt-mtls' {
 
   export const MqttProvider: React.FC<MqttProviderProps>;
   export function useMqtt(): MqttContextType;
+
+  /**
+   * Singleton MQTT Manager for imperative API usage
+   */
+  export class MqttManager {
+    static readonly Instance: MqttManager;
+    connect(config: MqttConfig): Promise<void>;
+    disconnect(): Promise<void>;
+    subscribe(topic: string, qos?: number): Promise<void>;
+    unsubscribe(topic: string): Promise<void>;
+    publish(
+      topic: string,
+      message: string | Uint8Array | ArrayBuffer,
+      qos?: number,
+      retained?: boolean,
+    ): Promise<void>;
+    isConnected(): boolean;
+    cleanup(): void;
+  }
 
   /**
    * Native MQTT Module interface
@@ -62,22 +86,22 @@ declare module 'react-native-mqtt-mtls' {
       brokerCommonName: string | null,
       isAdminUser: boolean,
       successCallback: (message: string) => void,
-      errorCallback: (error: string) => void
+      errorCallback: (error: string) => void,
     ): void;
     disconnect(
       successCallback: (message: string) => void,
-      errorCallback: (error: string) => void
+      errorCallback: (error: string) => void,
     ): void;
     subscribe(
       topic: string,
       qos: number,
       successCallback: (message: string) => void,
-      errorCallback: (error: string) => void
+      errorCallback: (error: string) => void,
     ): void;
     unsubscribe(
       topic: string,
       successCallback: (message: string) => void,
-      errorCallback: (error: string) => void
+      errorCallback: (error: string) => void,
     ): void;
     publish(
       topic: string,
@@ -85,7 +109,7 @@ declare module 'react-native-mqtt-mtls' {
       qos: number,
       retained: boolean,
       successCallback: (message: string) => void,
-      errorCallback: (error: string) => void
+      errorCallback: (error: string) => void,
     ): void;
     isConnected(callback: (isConnected: boolean) => void): void;
   }
